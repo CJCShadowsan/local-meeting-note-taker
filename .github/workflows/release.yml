@@ -37,6 +37,8 @@ jobs:
       - name: Verify redistributable zip
         run: |
           test -f LocalMeetingNoteTaker-redistributable.zip
+          file ".package-work/Local Meeting Note Taker.app/Contents/MacOS/LocalMeetingNoteTaker" | grep -F "Mach-O"
+          lipo -info ".package-work/Local Meeting Note Taker.app/Contents/MacOS/LocalMeetingNoteTaker"
           unzip -l LocalMeetingNoteTaker-redistributable.zip
           unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -F "Local Meeting Note Taker.app/Contents/Resources/local-meeting-note-taker/app.py"
           unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -F "Local Meeting Note Taker.app/Contents/Resources/local-meeting-note-taker/launch_app.sh"

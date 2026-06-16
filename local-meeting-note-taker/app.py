@@ -24,7 +24,21 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 RESULTS_DIR = DATA_DIR / "results"
 NOTES_DIR = DATA_DIR / "notes"
 NATIVE_RECORDINGS_DIR = DATA_DIR / "native-recordings"
-APP_VERSION = "0.1.5"
+APP_VERSION = "0.1.6"
+
+
+def app_path_env() -> str:
+    preferred = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+    seen: set[str] = set()
+    paths: list[str] = []
+    for folder in preferred + os.getenv("PATH", "").split(os.pathsep):
+        if folder and folder not in seen:
+            seen.add(folder)
+            paths.append(folder)
+    return os.pathsep.join(paths)
+
+
+os.environ["PATH"] = app_path_env()
 
 for folder in (UPLOAD_DIR, RESULTS_DIR, NOTES_DIR, NATIVE_RECORDINGS_DIR):
     folder.mkdir(parents=True, exist_ok=True)

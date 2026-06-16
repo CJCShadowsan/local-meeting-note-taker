@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 
 private let appName = "Local Meeting Note Taker"
+private let appPathPrefix = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
@@ -13,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var setupProcess: Process?
     private var appRoot: URL?
     private var setupLogFile: URL?
+    private var outputBuffer = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -66,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = [checkScript.path]
         process.currentDirectoryURL = root
+        process.environment = appEnvironment()
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
 
@@ -106,9 +109,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let progress = NSProgressIndicator()
         progress.style = .bar
-        progress.isIndeterminate = true
+        progress.isIndeterminate = false
+        progress.minValue = 0
+        progress.maxValue = 100
+        progress.doubleValue = 3
         progress.translatesAutoresizingMaskIntoConstraints = false
-        progress.startAnimation(nil)
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
@@ -185,16 +190,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        appendToSetupLog("Starting first-run setup\n")
+        appendOutput("Starting first-run setup\n")
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = [installer.path]
         process.currentDirectoryURL = root
 
-        var environment = ProcessInfo.processInfo.environment
+        var environment = appEnvironment()
         environment["LMNT_ASSUME_YES"] = "1"
+        environment["LMNT_MACHINE_PROGRESS"] = "1"
         environment["PYTHONUNBUFFERED"] = "1"
+        environment["PYTHONIOENCODING"] = "utf-8"
         process.environment = environment
 
         let outputPipe = Pipe()
@@ -232,8 +239,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupSucceeded() {
         setupProcess = nil
+        flushOutputBuffer()
         appendToSetupLog("Setup completed\n")
-        progress?.stopAnimation(nil)
+        progress?.doubleValue = 100
         statusLabel?.stringValue = "Starting Local Meeting Note Taker..."
         detailLabel?.stringValue = "The app is opening now."
         closeButton?.title = "Close"
@@ -249,8 +257,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupFailed(_ message: String) {
         setupProcess = nil
+        flushOutputBuffer()
         appendToSetupLog("\(message)\n")
-        progress?.stopAnimation(nil)
         statusLabel?.stringValue = "Setup could not finish."
         detailLabel?.stringValue = "\(message) Check the setup log for details."
         closeButton?.title = "Close"
@@ -265,6 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         process.executableURL = python
         process.arguments = [launcher.path]
         process.currentDirectoryURL = root
+        process.environment = appEnvironment()
 
         let logFile = root.appendingPathComponent("data/logs/desktop-launcher.log")
         FileManager.default.createFile(atPath: logFile.path, contents: nil)
@@ -283,28 +292,85 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func appendOutput(_ text: String) {
         appendToSetupLog(text)
-        updateStatus(from: text)
+        outputBuffer += text.replacingOccurrences(of: "\r", with: "\n")
 
-        guard let logView else {
-            return
+        var visibleText = ""
+        while let newline = outputBuffer.range(of: "\n") {
+            let line = String(outputBuffer[..<newline.lowerBound])
+            outputBuffer.removeSubrange(outputBuffer.startIndex..<newline.upperBound)
+            if handleControlLine(line) {
+                continue
+            }
+            updateStatus(from: line)
+            visibleText += line + "\n"
         }
 
+        appendVisibleOutput(visibleText)
+    }
+
+    private func flushOutputBuffer() {
+        guard !outputBuffer.isEmpty else {
+            return
+        }
+        let line = outputBuffer
+        outputBuffer = ""
+        if !handleControlLine(line) {
+            updateStatus(from: line)
+            appendVisibleOutput(line + "\n")
+        }
+    }
+
+    private func appendVisibleOutput(_ text: String) {
+        guard !text.isEmpty, let logView else {
+            return
+        }
         let attributed = NSAttributedString(string: text)
         logView.textStorage?.append(attributed)
         logView.scrollRangeToVisible(NSRange(location: logView.string.count, length: 0))
     }
 
-    private func updateStatus(from text: String) {
-        for rawLine in text.components(separatedBy: .newlines) {
-            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            if line.hasPrefix("==> ") {
-                statusLabel?.stringValue = String(line.dropFirst(4))
-            } else if line.contains("Collecting ") || line.contains("Downloading ") {
-                statusLabel?.stringValue = "Installing Python packages..."
-            } else if line.contains("Pulling ") {
-                statusLabel?.stringValue = "Downloading local AI model..."
+    private func handleControlLine(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("LMNT_PROGRESS|") {
+            let parts = trimmed.split(separator: "|", maxSplits: 3, omittingEmptySubsequences: false)
+            if parts.count == 4,
+               let current = Double(parts[1]),
+               let total = Double(parts[2]),
+               total > 0 {
+                progress?.doubleValue = min(98, max(3, (current / total) * 100))
+                statusLabel?.stringValue = String(parts[3])
+                detailLabel?.stringValue = "Step \(Int(current)) of \(Int(total))"
             }
+            return true
         }
+
+        if trimmed.hasPrefix("LMNT_DETAIL|") {
+            detailLabel?.stringValue = String(trimmed.dropFirst("LMNT_DETAIL|".count))
+            return true
+        }
+
+        return false
+    }
+
+    private func updateStatus(from line: String) {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("==> ") {
+            statusLabel?.stringValue = String(trimmed.dropFirst(4))
+        } else if trimmed.contains("Collecting ") || trimmed.contains("Downloading ") {
+            statusLabel?.stringValue = "Installing Python packages..."
+        } else if trimmed.contains("Pulling ") {
+            statusLabel?.stringValue = "Downloading local AI model..."
+        }
+    }
+
+    private func appEnvironment(extra: [String: String] = [:]) -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        let existingPath = environment["PATH"] ?? ""
+        environment["PATH"] = existingPath.isEmpty ? appPathPrefix : "\(appPathPrefix):\(existingPath)"
+        for (key, value) in extra {
+            environment[key] = value
+        }
+        return environment
     }
 
     private func appendToSetupLog(_ text: String) {

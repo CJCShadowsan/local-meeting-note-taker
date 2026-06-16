@@ -3,15 +3,33 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+
 LAUNCH_AFTER=0
 if [ "${1:-}" = "--launch-after" ]; then
   LAUNCH_AFTER=1
 fi
 
 mkdir -p data/logs data/uploads data/results data/notes data/native-recordings
+PROGRESS_STEP=0
+PROGRESS_TOTAL=7
 
 log() {
   printf "\n==> %s\n" "$1"
+}
+
+progress_step() {
+  PROGRESS_STEP=$((PROGRESS_STEP + 1))
+  if [ "${LMNT_MACHINE_PROGRESS:-0}" = "1" ]; then
+    printf "LMNT_PROGRESS|%s|%s|%s\n" "$PROGRESS_STEP" "$PROGRESS_TOTAL" "$1"
+  fi
+  log "$1"
+}
+
+progress_detail() {
+  if [ "${LMNT_MACHINE_PROGRESS:-0}" = "1" ]; then
+    printf "LMNT_DETAIL|%s\n" "$1"
+  fi
 }
 
 have() {
@@ -31,6 +49,7 @@ load_brew_env() {
   elif [ -x /usr/local/bin/brew ]; then
     eval "$(/usr/local/bin/brew shellenv)"
   fi
+  export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 }
 
 install_homebrew_if_needed() {
@@ -44,6 +63,7 @@ install_homebrew_if_needed() {
 Homebrew is required so this app can install ffmpeg, Ollama, and a modern Python when needed.
 This will run Homebrew's official installer from https://brew.sh.
 TEXT
+  progress_detail "Installing Homebrew from brew.sh"
 
   if [ "${LMNT_ASSUME_YES:-0}" = "1" ]; then
     answer="y"
@@ -65,20 +85,44 @@ TEXT
       exit 1
       ;;
   esac
+
+  if ! have brew; then
+    echo "Homebrew installation finished, but brew was not found on PATH."
+    echo "PATH=$PATH"
+    exit 1
+  fi
 }
 
-ensure_system_tools() {
+ensure_brew_formula() {
+  local formula="$1"
+  local binary="$2"
+
   install_homebrew_if_needed
 
-  if ! have ffmpeg; then
-    log "Installing ffmpeg"
-    brew install ffmpeg
+  if have "$binary"; then
+    progress_detail "$binary is ready at $(command -v "$binary")"
+    return 0
   fi
 
-  if ! have ollama; then
-    log "Installing Ollama"
-    brew install ollama
+  progress_detail "Installing $formula with Homebrew"
+  if ! brew install "$formula"; then
+    progress_detail "Homebrew install failed; updating Homebrew and retrying $formula"
+    brew update
+    brew install "$formula"
   fi
+
+  load_brew_env
+  hash -r
+
+  if ! have "$binary"; then
+    echo "Homebrew installed $formula, but $binary is still not available."
+    echo "PATH=$PATH"
+    echo "brew prefix: $(brew --prefix 2>/dev/null || true)"
+    brew list --versions "$formula" || true
+    exit 1
+  fi
+
+  progress_detail "$binary is ready at $(command -v "$binary")"
 }
 
 select_python() {
@@ -175,10 +219,19 @@ PY
 }
 
 log "Preparing Local Meeting Note Taker"
-ensure_system_tools
+progress_step "Checking Homebrew"
+install_homebrew_if_needed
+progress_step "Installing ffmpeg"
+ensure_brew_formula ffmpeg ffmpeg
+progress_step "Installing Ollama"
+ensure_brew_formula ollama ollama
+progress_step "Preparing Python environment"
 ensure_python_environment
+progress_step "Starting Ollama"
 ensure_ollama_running
+progress_step "Preparing Ollama model"
 ensure_ollama_model
+progress_step "Preparing Whisper model"
 ensure_whisper_model
 
 log "Installation complete"

@@ -27,7 +27,21 @@ NATIVE_RECORDINGS_DIR = DATA_DIR / "native-recordings"
 DEFAULT_PORT = int(os.getenv("APP_PORT", "5055"))
 APP_NAME = "Local Meeting Note Taker"
 APP_IDENTIFIER = "local.meeting.note.taker"
-APP_VERSION = "0.1.5"
+APP_VERSION = "0.1.6"
+
+
+def app_path_env() -> str:
+    preferred = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+    seen: set[str] = set()
+    paths: list[str] = []
+    for folder in preferred + os.getenv("PATH", "").split(os.pathsep):
+        if folder and folder not in seen:
+            seen.add(folder)
+            paths.append(folder)
+    return os.pathsep.join(paths)
+
+
+os.environ["PATH"] = app_path_env()
 
 
 def pid_is_running(pid: int) -> bool:
@@ -306,6 +320,7 @@ def start_server() -> tuple[int, int | None, bool]:
         {
             "APP_HOST": "127.0.0.1",
             "APP_PORT": str(port),
+            "PATH": app_path_env(),
             "PYTHONUNBUFFERED": "1",
         }
     )
