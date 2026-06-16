@@ -61,7 +61,7 @@ Double-click either:
 - `Local Meeting Note Taker.app`
 - `Start Local Meeting Note Taker.command`
 
-The launcher checks whether requirements are ready. If not, the redistributable app opens a first-run setup/loading window with stage progress. After installation, it starts or reuses the local app server and opens a **Local Meeting Note Taker** desktop window. It should not open Safari, Chrome, Terminal, or another external browser for the normal app path.
+The launcher checks whether requirements are ready. If not, the redistributable app opens a first-run setup/loading window with stage progress. After installation, it starts or reuses the local app server and opens a **Local Meeting Note Taker** desktop window. The app requests macOS microphone permission at startup and uses the native recording bridge for live capture. It should not open Safari, Chrome, Terminal, or another external browser for the normal app path.
 
 To stop the saved webapp process, double-click:
 

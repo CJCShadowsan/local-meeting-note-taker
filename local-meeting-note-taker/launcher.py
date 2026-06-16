@@ -27,7 +27,7 @@ NATIVE_RECORDINGS_DIR = DATA_DIR / "native-recordings"
 DEFAULT_PORT = int(os.getenv("APP_PORT", "5055"))
 APP_NAME = "Local Meeting Note Taker"
 APP_IDENTIFIER = "local.meeting.note.taker"
-APP_VERSION = "0.1.8"
+APP_VERSION = "0.1.9"
 
 
 def app_path_env() -> str:
@@ -366,7 +366,7 @@ def open_desktop_window(port: int) -> int:
         print("Run ./setup.sh, or launch with --browser as a fallback.")
         return 1
 
-    url = f"http://127.0.0.1:{port}"
+    url = f"http://127.0.0.1:{port}/?native=1"
     print(f"Opening {APP_NAME} app window at {url}")
     desktop_log(f"Opening native app window at {url}")
     try:

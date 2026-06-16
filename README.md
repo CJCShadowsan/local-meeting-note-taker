@@ -40,7 +40,7 @@ On first launch, the app opens a setup/loading window if requirements are missin
 - an Ollama summary model
 - the default Whisper speech model
 
-After setup, the app opens its own **Local Meeting Note Taker** window and identifies itself that way in the macOS app menu. It should not require Safari, Chrome, Terminal, or another browser.
+After setup, the app opens its own **Local Meeting Note Taker** window and identifies itself that way in the macOS app menu. The app requests macOS microphone permission at startup, then uses the native recording bridge instead of WebKit browser microphone capture. It should not require Safari, Chrome, Terminal, or another browser.
 
 ## Manual Install
 

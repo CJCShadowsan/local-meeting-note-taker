@@ -35,6 +35,9 @@ const elements = {
   notesList: document.querySelector("#notesList"),
 };
 
+const urlParams = new URLSearchParams(window.location.search);
+const nativeBridgeExpected = urlParams.get("native") === "1";
+
 const state = {
   selectedFile: null,
   activeJobId: null,
@@ -48,6 +51,7 @@ const state = {
   pendingDelete: null,
   nativeRecording: false,
   nativeApiReady: false,
+  nativeBridgeExpected,
 };
 
 function setStatus(message, progress = null) {
@@ -63,8 +67,10 @@ function disclosureConfirmed() {
 
 function updateCaptureControls() {
   const ready = disclosureConfirmed();
+  const recorderReady = !state.nativeBridgeExpected || state.nativeApiReady;
   elements.uploadButton.disabled = state.isBusy || !state.selectedFile || !ready;
-  elements.recordButton.disabled = state.isBusy || Boolean(state.recorder) || state.nativeRecording || !ready;
+  elements.recordButton.disabled =
+    state.isBusy || Boolean(state.recorder) || state.nativeRecording || !ready || !recorderReady;
 }
 
 function setBusy(isBusy) {
@@ -451,6 +457,12 @@ async function startRecording() {
     return;
   }
 
+  if (state.nativeBridgeExpected) {
+    setStatus("Native recording is still starting. Try again in a moment.", 0);
+    updateCaptureControls();
+    return;
+  }
+
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
     setStatus("This browser does not support local audio recording.", 0);
     return;
@@ -560,6 +572,10 @@ elements.dropZone.addEventListener("keydown", (event) => {
 
 loadHealth();
 loadNotes();
+if (state.nativeBridgeExpected) {
+  elements.recordingState.textContent = "Starting Mac input";
+  setStatus("Preparing native app recording.", 0);
+}
 updateCaptureControls();
 
 window.addEventListener("pywebviewready", () => {

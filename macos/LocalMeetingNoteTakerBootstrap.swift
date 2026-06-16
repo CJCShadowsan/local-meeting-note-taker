@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 
 private let appName = "Local Meeting Note Taker"
@@ -28,6 +29,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appRoot = root
         setupLogFile = setupLogURL(for: root)
 
+        requestMicrophoneAccess {
+            self.continueStartup(with: root)
+        }
+    }
+
+    private func continueStartup(with root: URL) {
         if requirementsAreReady(in: root) {
             launchDesktopApp(from: root)
             NSApp.terminate(nil)
@@ -84,6 +91,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return true
         } catch {
             return false
+        }
+    }
+
+    private func requestMicrophoneAccess(completion: @escaping () -> Void) {
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        switch status {
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                DispatchQueue.main.async {
+                    self.appendToSetupLog("Microphone permission \(granted ? "granted" : "not granted")\n")
+                    completion()
+                }
+            }
+        default:
+            appendToSetupLog("Microphone permission status: \(status.rawValue)\n")
+            completion()
         }
     }
 
