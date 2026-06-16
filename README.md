@@ -20,7 +20,9 @@ It records disclosed meetings from a selected macOS audio input, transcribes loc
 
 ## Quick Start
 
-Download the release zip, unzip it, then drag:
+From the GitHub release page, download **`LocalMeetingNoteTaker-redistributable.zip`**. Do not use GitHub's automatic **Source code (zip)** archive as the app download.
+
+Unzip the redistributable, then drag:
 
 ```text
 Local Meeting Note Taker.app
@@ -78,7 +80,7 @@ From the repo root:
 ./package_redistributable.sh
 ```
 
-The generated zip excludes local `.venv`, logs, notes, uploads, recordings, and machine-specific PID/port files.
+The generated zip contains a single self-contained `Local Meeting Note Taker.app`. It excludes local `.venv`, logs, notes, uploads, recordings, and machine-specific PID/port files.
 
 ## Release Automation
 

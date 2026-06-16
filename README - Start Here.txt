@@ -1,6 +1,9 @@
 Local Meeting Note Taker
 ========================
 
+For app installs, download LocalMeetingNoteTaker-redistributable.zip from the GitHub release assets.
+If you downloaded GitHub's Source code zip instead, that is source material, not the packaged app.
+
 Double-click:
 
   Local Meeting Note Taker.app
@@ -17,8 +20,4 @@ If first-run setup is needed, the app opens a Terminal installer. That installer
   - a local Ollama summary model
   - the default Whisper speech model
 
-If the app needs repair, double-click:
-
-  INSTALL - Local Meeting Note Taker.command
-
-The sidecar local-meeting-note-taker folder is included for manual repair/source use, but the top-level app does not need it after being dragged to /Applications.
+If the app needs repair, run it again from /Applications. The app-local installer lives inside the app bundle.

@@ -38,9 +38,10 @@ jobs:
         run: |
           test -f LocalMeetingNoteTaker-redistributable.zip
           unzip -l LocalMeetingNoteTaker-redistributable.zip
-          unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -F "Local Meeting Note Taker/Local Meeting Note Taker.app/Contents/Resources/local-meeting-note-taker/app.py"
-          unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -F "Local Meeting Note Taker/Local Meeting Note Taker.app/Contents/Resources/local-meeting-note-taker/launch_app.sh"
-          ! unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -E '(^|/)(\.git|\.github|\.venv|__pycache__|\.package-work)(/|$)'
+          unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -F "Local Meeting Note Taker.app/Contents/Resources/local-meeting-note-taker/app.py"
+          unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -F "Local Meeting Note Taker.app/Contents/Resources/local-meeting-note-taker/launch_app.sh"
+          ! unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -F "Local Meeting Note Taker/local-meeting-note-taker/"
+          ! unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -E '(^|/)(\.git|\.github|\.venv|__pycache__|\.package-work|__MACOSX)(/|$)'
           ! unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -E 'data/(uploads|notes|results|logs|native-recordings)/.+'
 
       - name: Attach zip to release
