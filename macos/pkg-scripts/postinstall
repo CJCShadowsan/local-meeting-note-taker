@@ -1,0 +1,21 @@
+#!/bin/bash
+set -euo pipefail
+
+APP="/Applications/Local Meeting Note Taker.app"
+APP_RESOURCES="$APP/Contents/Resources/local-meeting-note-taker"
+
+if [ -d "$APP" ]; then
+  /usr/sbin/chown -R root:admin "$APP" 2>/dev/null || true
+  /bin/chmod -R u+rwX,go+rX "$APP" 2>/dev/null || true
+  /bin/chmod +x "$APP/Contents/MacOS/LocalMeetingNoteTaker" 2>/dev/null || true
+
+  if [ -d "$APP_RESOURCES" ]; then
+    /usr/bin/find "$APP_RESOURCES" \
+      -type f \( -name "*.sh" -o -name "*.command" \) \
+      -exec /bin/chmod +x {} \; 2>/dev/null || true
+  fi
+
+  /usr/bin/xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
+fi
+
+exit 0

@@ -16,13 +16,13 @@ It records disclosed meetings from a selected macOS audio input, transcribes loc
 - Participant-disclosure gate before capture
 - Source-audio deletion enabled by default
 - History view for downloading Markdown notes and deleting saved conversations
-- Redistributable zip packaging script
+- Redistributable installer package and zip packaging scripts
 
 ## Quick Start
 
-From the GitHub release page, download **`LocalMeetingNoteTaker-redistributable.zip`**. Do not use GitHub's automatic **Source code (zip)** archive as the app download.
+From the GitHub release page, download **`LocalMeetingNoteTaker-installer.pkg`** for the easiest install. Double-click the package and follow macOS Installer; it installs **Local Meeting Note Taker.app** into `/Applications`, sets the app/helper script executable permissions, and removes quarantine from the installed app path.
 
-Unzip the redistributable, then drag:
+The release also includes **`LocalMeetingNoteTaker-redistributable.zip`** for manual installs. A zip cannot auto-install when double-clicked on macOS; Archive Utility only extracts it. If using the zip, unzip it, then drag:
 
 ```text
 Local Meeting Note Taker.app
@@ -72,19 +72,20 @@ I’m recording/transcribing this meeting locally on my Mac to generate notes. T
 
 Raw source audio is deleted after processing by default.
 
-## Build A Redistributable Zip
+## Build Redistributable Artifacts
 
 From the repo root:
 
 ```bash
 ./package_redistributable.sh
+./package_installer.sh
 ```
 
-The generated zip contains a single self-contained `Local Meeting Note Taker.app`. It excludes local `.venv`, logs, notes, uploads, recordings, and machine-specific PID/port files.
+The generated zip contains a single self-contained `Local Meeting Note Taker.app`. The generated pkg installs that app into `/Applications` and runs a postinstall permission/quarantine cleanup for the installed app. Both artifacts exclude local `.venv`, logs, notes, uploads, recordings, and machine-specific PID/port files.
 
 ## Release Automation
 
-GitHub Actions builds the redistributable zip only when a GitHub Release is published. Normal pushes and pull requests do not build artifacts.
+GitHub Actions builds the redistributable pkg and zip only when a GitHub Release is published. Normal pushes and pull requests do not build artifacts.
 
 To publish a release:
 
@@ -94,7 +95,7 @@ git push origin v0.1.1
 gh release create v0.1.1 --title "Local Meeting Note Taker v0.1.1" --notes "Release notes"
 ```
 
-The release workflow builds `LocalMeetingNoteTaker-redistributable.zip` and attaches it to that release.
+The release workflow builds `LocalMeetingNoteTaker-installer.pkg` and `LocalMeetingNoteTaker-redistributable.zip`, then attaches both to that release.
 
 ## Project Layout
 
@@ -104,7 +105,8 @@ The release workflow builds `LocalMeetingNoteTaker-redistributable.zip` and atta
 ├── INSTALL - Local Meeting Note Taker.command
 ├── OPEN ME - Local Meeting Note Taker.command
 ├── macos/
-│   └── LocalMeetingNoteTakerBootstrap.swift
+│   ├── LocalMeetingNoteTakerBootstrap.swift
+│   └── pkg-scripts/
 ├── local-meeting-note-taker/
 │   ├── app.py
 │   ├── launcher.py
@@ -113,11 +115,12 @@ The release workflow builds `LocalMeetingNoteTaker-redistributable.zip` and atta
 │   ├── static/
 │   ├── templates/
 │   └── requirements.txt
+├── package_installer.sh
 └── package_redistributable.sh
 ```
 
 ## Notes
 
-This app is not currently Apple-signed or notarized. On a new Mac, users may need to right-click the app and choose **Open** the first time.
+This app is not currently Apple-signed or notarized. The installer package removes quarantine from the installed app, but the package itself may still require right-click **Open** on stricter macOS Gatekeeper setups until the project is signed and notarized with an Apple Developer ID.
 
 If the app window still says **Recent notes** instead of **History**, it is showing an older local server process. Current releases verify the running server belongs to the same app bundle before reusing it; older releases may need to be quit or replaced.

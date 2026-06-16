@@ -1,7 +1,9 @@
 .DS_Store
 __MACOSX/
 .package-work/
+.pkg-work/
 *.zip
+*.pkg
 *.tar.gz
 *.log
 

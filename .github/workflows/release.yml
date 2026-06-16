@@ -1,4 +1,4 @@
-name: Release App Zip
+name: Release App Installers
 
 on:
   release:
@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   package:
-    name: Build redistributable app zip
+    name: Build redistributable app artifacts
     runs-on: macos-latest
 
     steps:
@@ -21,6 +21,8 @@ jobs:
       - name: Validate package inputs
         run: |
           bash -n package_redistributable.sh
+          bash -n package_installer.sh
+          bash -n macos/pkg-scripts/postinstall
           bash -n "INSTALL - Local Meeting Note Taker.command"
           bash -n "OPEN ME - Local Meeting Note Taker.command"
           bash -n "Local Meeting Note Taker.app/Contents/MacOS/LocalMeetingNoteTaker"
@@ -46,10 +48,20 @@ jobs:
           ! unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -E '(^|/)(\.git|\.github|\.venv|__pycache__|\.package-work|__MACOSX)(/|$)'
           ! unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -E 'data/(uploads|notes|results|logs|native-recordings)/.+'
 
+      - name: Build installer package
+        run: LMNT_USE_EXISTING_APP=1 ./package_installer.sh
+
+      - name: Verify installer package
+        run: |
+          test -f LocalMeetingNoteTaker-installer.pkg
+          pkgutil --payload-files LocalMeetingNoteTaker-installer.pkg | grep -F "Applications/Local Meeting Note Taker.app/Contents/MacOS/LocalMeetingNoteTaker"
+          pkgutil --payload-files LocalMeetingNoteTaker-installer.pkg | grep -F "Applications/Local Meeting Note Taker.app/Contents/Resources/local-meeting-note-taker/app.py"
+
       - name: Attach zip to release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "${{ github.event.release.tag_name }}" \
             LocalMeetingNoteTaker-redistributable.zip \
+            LocalMeetingNoteTaker-installer.pkg \
             --clobber

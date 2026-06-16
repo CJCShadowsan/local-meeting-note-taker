@@ -19,7 +19,7 @@ This folder is the self-contained local webapp application. For source/manual ru
 
 You can move the folder elsewhere on the same Mac. If you move it to another Mac, the first launch will run the installer so the Python environment and local dependencies match that machine.
 
-For distribution, use `LocalMeetingNoteTaker-redistributable.zip` from the GitHub release assets, not GitHub's automatic source-code archive. The redistributable unzips to a single `Local Meeting Note Taker.app` that includes its own copy of this folder under `Contents/Resources/local-meeting-note-taker`, so users can drag the app to `/Applications` and launch it without keeping a sidecar folder beside it.
+For distribution, use `LocalMeetingNoteTaker-installer.pkg` from the GitHub release assets for the normal install path. It installs `Local Meeting Note Taker.app` into `/Applications`, sets executable permissions, and removes quarantine from the installed app path. The release also includes `LocalMeetingNoteTaker-redistributable.zip` for manual drag-to-Applications installs; GitHub's automatic source-code archive is not an app download.
 
 ## Requirements
 
