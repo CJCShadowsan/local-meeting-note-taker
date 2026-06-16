@@ -44,10 +44,20 @@ install_homebrew_if_needed() {
 Homebrew is required so this app can install ffmpeg, Ollama, and a modern Python when needed.
 This will run Homebrew's official installer from https://brew.sh.
 TEXT
-  read -r -p "Install Homebrew now? [y/N] " answer
+
+  if [ "${LMNT_ASSUME_YES:-0}" = "1" ]; then
+    answer="y"
+  else
+    read -r -p "Install Homebrew now? [y/N] " answer
+  fi
+
   case "$answer" in
     y|Y|yes|YES)
-      /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      if [ "${LMNT_ASSUME_YES:-0}" = "1" ]; then
+        NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      else
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      fi
       load_brew_env
       ;;
     *)
@@ -176,4 +186,3 @@ log "Installation complete"
 if [ "$LAUNCH_AFTER" = "1" ]; then
   exec .venv/bin/python launcher.py
 fi
-

@@ -25,7 +25,9 @@ DESKTOP_LOG_FILE = LOG_DIR / "desktop.log"
 NATIVE_RECORDING_LOG_FILE = LOG_DIR / "native-recording.log"
 NATIVE_RECORDINGS_DIR = DATA_DIR / "native-recordings"
 DEFAULT_PORT = int(os.getenv("APP_PORT", "5055"))
-APP_VERSION = "0.1.4"
+APP_NAME = "Local Meeting Note Taker"
+APP_IDENTIFIER = "local.meeting.note.taker"
+APP_VERSION = "0.1.5"
 
 
 def pid_is_running(pid: int) -> bool:
@@ -93,6 +95,25 @@ def desktop_log(message: str) -> None:
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     with DESKTOP_LOG_FILE.open("a", encoding="utf-8") as log:
         log.write(f"[{timestamp}] {message}\n")
+
+
+def configure_macos_app_identity() -> None:
+    if sys.platform != "darwin":
+        return
+    try:
+        import AppKit
+
+        bundle = AppKit.NSBundle.mainBundle()
+        info = bundle.infoDictionary()
+        info["CFBundleName"] = APP_NAME
+        info["CFBundleDisplayName"] = APP_NAME
+        info["CFBundleIdentifier"] = APP_IDENTIFIER
+
+        process = AppKit.NSProcessInfo.processInfo()
+        if hasattr(process, "setProcessName_"):
+            process.setProcessName_(APP_NAME)
+    except Exception as error:
+        desktop_log(f"Could not set macOS app identity: {type(error).__name__}: {error}")
 
 
 def append_log(path: Path, message: str) -> None:
@@ -320,6 +341,7 @@ def open_browser(port: int, no_open: bool) -> None:
 
 
 def open_desktop_window(port: int) -> int:
+    configure_macos_app_identity()
     try:
         import webview
     except Exception as error:
@@ -330,11 +352,11 @@ def open_desktop_window(port: int) -> int:
         return 1
 
     url = f"http://127.0.0.1:{port}"
-    print(f"Opening Local Meeting Note Taker app window at {url}")
+    print(f"Opening {APP_NAME} app window at {url}")
     desktop_log(f"Opening native app window at {url}")
     try:
         webview.create_window(
-            "Local Meeting Note Taker",
+            APP_NAME,
             url,
             js_api=NativeRecorderApi(port),
             width=1260,

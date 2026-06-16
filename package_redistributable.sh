@@ -9,6 +9,25 @@ APP_MACOS="$APP_CONTENTS/MacOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_RESOURCE_ROOT="$APP_RESOURCES/local-meeting-note-taker"
 ZIP_PATH="$REPO_ROOT/LocalMeetingNoteTaker-redistributable.zip"
+BOOTSTRAP_SOURCE="$REPO_ROOT/macos/LocalMeetingNoteTakerBootstrap.swift"
+
+compile_bootstrap() {
+  if ! command -v swiftc >/dev/null 2>&1; then
+    echo "swiftc is required to build the native app bootstrap." >&2
+    exit 1
+  fi
+
+  export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$WORK_DIR/clang-module-cache}"
+  local arm_binary="$WORK_DIR/LocalMeetingNoteTaker-arm64"
+  local intel_binary="$WORK_DIR/LocalMeetingNoteTaker-x86_64"
+  if swiftc -target arm64-apple-macos13.0 "$BOOTSTRAP_SOURCE" -o "$arm_binary" \
+    && swiftc -target x86_64-apple-macos13.0 "$BOOTSTRAP_SOURCE" -o "$intel_binary"; then
+    lipo -create "$arm_binary" "$intel_binary" -output "$APP_MACOS/LocalMeetingNoteTaker"
+  else
+    swiftc "$BOOTSTRAP_SOURCE" -o "$APP_MACOS/LocalMeetingNoteTaker"
+  fi
+  chmod +x "$APP_MACOS/LocalMeetingNoteTaker"
+}
 
 rm -rf "$WORK_DIR"
 mkdir -p "$APP_MACOS" "$APP_RESOURCE_ROOT"
@@ -17,9 +36,7 @@ rsync -a \
   "$REPO_ROOT/Local Meeting Note Taker.app/Contents/Info.plist" \
   "$APP_CONTENTS/Info.plist"
 
-rsync -a \
-  "$REPO_ROOT/Local Meeting Note Taker.app/Contents/MacOS/LocalMeetingNoteTaker" \
-  "$APP_MACOS/LocalMeetingNoteTaker"
+compile_bootstrap
 
 rsync -a \
   --exclude ".DS_Store" \

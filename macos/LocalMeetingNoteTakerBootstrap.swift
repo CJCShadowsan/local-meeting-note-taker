@@ -1,0 +1,352 @@
+import AppKit
+import Foundation
+
+private let appName = "Local Meeting Note Taker"
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var window: NSWindow?
+    private var statusLabel: NSTextField?
+    private var detailLabel: NSTextField?
+    private var logView: NSTextView?
+    private var progress: NSProgressIndicator?
+    private var closeButton: NSButton?
+    private var setupProcess: Process?
+    private var appRoot: URL?
+    private var setupLogFile: URL?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+
+        guard let root = findAppRoot() else {
+            showFatalError("Local Meeting Note Taker resources were not found inside this app bundle.")
+            return
+        }
+
+        appRoot = root
+        setupLogFile = root.appendingPathComponent("data/logs/setup-window.log")
+
+        if requirementsAreReady(in: root) {
+            launchDesktopApp(from: root)
+            NSApp.terminate(nil)
+            return
+        }
+
+        buildSetupWindow()
+        runSetup(from: root)
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return setupProcess == nil
+    }
+
+    private func findAppRoot() -> URL? {
+        let fileManager = FileManager.default
+        let bundleURL = Bundle.main.bundleURL
+        let resourceRoot = bundleURL.appendingPathComponent("Contents/Resources/local-meeting-note-taker")
+        let sidecarRoot = bundleURL.deletingLastPathComponent().appendingPathComponent("local-meeting-note-taker")
+
+        for candidate in [resourceRoot, sidecarRoot] {
+            let launcher = candidate.appendingPathComponent("launch_app.sh")
+            if fileManager.isExecutableFile(atPath: launcher.path) {
+                return candidate
+            }
+        }
+
+        return nil
+    }
+
+    private func requirementsAreReady(in root: URL) -> Bool {
+        let checkScript = root.appendingPathComponent("check_ready.sh")
+        guard FileManager.default.isExecutableFile(atPath: checkScript.path) else {
+            return false
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [checkScript.path]
+        process.currentDirectoryURL = root
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    private func buildSetupWindow() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 680, height: 440),
+            styleMask: [.titled, .closable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = appName
+        window.center()
+
+        let content = NSView()
+        window.contentView = content
+
+        let title = NSTextField(labelWithString: "Preparing Local Meeting Note Taker")
+        title.font = NSFont.systemFont(ofSize: 22, weight: .bold)
+        title.translatesAutoresizingMaskIntoConstraints = false
+
+        let status = NSTextField(labelWithString: "Installing required local components...")
+        status.font = NSFont.systemFont(ofSize: 14, weight: .medium)
+        status.translatesAutoresizingMaskIntoConstraints = false
+
+        let detail = NSTextField(labelWithString: "This can take a while the first time. Progress is shown below.")
+        detail.font = NSFont.systemFont(ofSize: 12)
+        detail.textColor = .secondaryLabelColor
+        detail.translatesAutoresizingMaskIntoConstraints = false
+
+        let progress = NSProgressIndicator()
+        progress.style = .bar
+        progress.isIndeterminate = true
+        progress.translatesAutoresizingMaskIntoConstraints = false
+        progress.startAnimation(nil)
+
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .lineBorder
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        let logView = NSTextView()
+        logView.isEditable = false
+        logView.isSelectable = true
+        logView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        logView.textColor = .labelColor
+        logView.backgroundColor = .textBackgroundColor
+        scrollView.documentView = logView
+
+        let logPath = setupLogFile?.path ?? "data/logs/setup-window.log"
+        let logLabel = NSTextField(labelWithString: "Setup log: \(logPath)")
+        logLabel.font = NSFont.systemFont(ofSize: 11)
+        logLabel.textColor = .secondaryLabelColor
+        logLabel.lineBreakMode = .byTruncatingMiddle
+        logLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let button = NSButton(title: "Cancel", target: self, action: #selector(closeSetupWindow))
+        button.translatesAutoresizingMaskIntoConstraints = false
+
+        for view in [title, status, detail, progress, scrollView, logLabel, button] {
+            content.addSubview(view)
+        }
+
+        NSLayoutConstraint.activate([
+            title.topAnchor.constraint(equalTo: content.topAnchor, constant: 28),
+            title.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 28),
+            title.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -28),
+
+            status.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 18),
+            status.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            status.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+
+            detail.topAnchor.constraint(equalTo: status.bottomAnchor, constant: 6),
+            detail.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            detail.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+
+            progress.topAnchor.constraint(equalTo: detail.bottomAnchor, constant: 16),
+            progress.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            progress.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+
+            scrollView.topAnchor.constraint(equalTo: progress.bottomAnchor, constant: 18),
+            scrollView.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+            scrollView.heightAnchor.constraint(equalToConstant: 190),
+
+            logLabel.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 14),
+            logLabel.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            logLabel.trailingAnchor.constraint(lessThanOrEqualTo: button.leadingAnchor, constant: -18),
+            logLabel.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -24),
+
+            button.centerYAnchor.constraint(equalTo: logLabel.centerYAnchor),
+            button.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+        ])
+
+        self.window = window
+        self.statusLabel = status
+        self.detailLabel = detail
+        self.progress = progress
+        self.logView = logView
+        self.closeButton = button
+
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    private func runSetup(from root: URL) {
+        let installer = root.appendingPathComponent("install_requirements.sh")
+        guard FileManager.default.isExecutableFile(atPath: installer.path) else {
+            setupFailed("Installer not found: \(installer.path)")
+            return
+        }
+
+        appendToSetupLog("Starting first-run setup\n")
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [installer.path]
+        process.currentDirectoryURL = root
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["LMNT_ASSUME_YES"] = "1"
+        environment["PYTHONUNBUFFERED"] = "1"
+        process.environment = environment
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = outputPipe
+
+        outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else {
+                return
+            }
+            DispatchQueue.main.async {
+                self?.appendOutput(text)
+            }
+        }
+
+        process.terminationHandler = { [weak self] finishedProcess in
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            DispatchQueue.main.async {
+                if finishedProcess.terminationStatus == 0 {
+                    self?.setupSucceeded()
+                } else {
+                    self?.setupFailed("Setup failed with exit code \(finishedProcess.terminationStatus).")
+                }
+            }
+        }
+
+        do {
+            try process.run()
+            setupProcess = process
+        } catch {
+            setupFailed("Could not start setup: \(error.localizedDescription)")
+        }
+    }
+
+    private func setupSucceeded() {
+        setupProcess = nil
+        appendToSetupLog("Setup completed\n")
+        progress?.stopAnimation(nil)
+        statusLabel?.stringValue = "Starting Local Meeting Note Taker..."
+        detailLabel?.stringValue = "The app is opening now."
+        closeButton?.title = "Close"
+
+        if let root = appRoot {
+            launchDesktopApp(from: root)
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            NSApp.terminate(nil)
+        }
+    }
+
+    private func setupFailed(_ message: String) {
+        setupProcess = nil
+        appendToSetupLog("\(message)\n")
+        progress?.stopAnimation(nil)
+        statusLabel?.stringValue = "Setup could not finish."
+        detailLabel?.stringValue = "\(message) Check the setup log for details."
+        closeButton?.title = "Close"
+        appendOutput("\n\(message)\n")
+    }
+
+    private func launchDesktopApp(from root: URL) {
+        let python = root.appendingPathComponent(".venv/bin/python")
+        let launcher = root.appendingPathComponent("launcher.py")
+
+        let process = Process()
+        process.executableURL = python
+        process.arguments = [launcher.path]
+        process.currentDirectoryURL = root
+
+        let logFile = root.appendingPathComponent("data/logs/desktop-launcher.log")
+        FileManager.default.createFile(atPath: logFile.path, contents: nil)
+        if let logHandle = try? FileHandle(forWritingTo: logFile) {
+            _ = try? logHandle.seekToEnd()
+            process.standardOutput = logHandle
+            process.standardError = logHandle
+        }
+
+        do {
+            try process.run()
+        } catch {
+            showFatalError("Could not launch the app: \(error.localizedDescription)")
+        }
+    }
+
+    private func appendOutput(_ text: String) {
+        appendToSetupLog(text)
+        updateStatus(from: text)
+
+        guard let logView else {
+            return
+        }
+
+        let attributed = NSAttributedString(string: text)
+        logView.textStorage?.append(attributed)
+        logView.scrollRangeToVisible(NSRange(location: logView.string.count, length: 0))
+    }
+
+    private func updateStatus(from text: String) {
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.hasPrefix("==> ") {
+                statusLabel?.stringValue = String(line.dropFirst(4))
+            } else if line.contains("Collecting ") || line.contains("Downloading ") {
+                statusLabel?.stringValue = "Installing Python packages..."
+            } else if line.contains("Pulling ") {
+                statusLabel?.stringValue = "Downloading local AI model..."
+            }
+        }
+    }
+
+    private func appendToSetupLog(_ text: String) {
+        guard let setupLogFile else {
+            return
+        }
+
+        let directory = setupLogFile.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: setupLogFile.path, contents: nil)
+
+        guard let handle = try? FileHandle(forWritingTo: setupLogFile) else {
+            return
+        }
+        defer {
+            try? handle.close()
+        }
+        _ = try? handle.seekToEnd()
+        if let data = text.data(using: .utf8) {
+            try? handle.write(contentsOf: data)
+        }
+    }
+
+    private func showFatalError(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = appName
+        alert.informativeText = message
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+        NSApp.terminate(nil)
+    }
+
+    @objc private func closeSetupWindow() {
+        if let process = setupProcess, process.isRunning {
+            process.terminate()
+        }
+        NSApp.terminate(nil)
+    }
+}
+
+let application = NSApplication.shared
+let delegate = AppDelegate()
+application.delegate = delegate
+application.run()

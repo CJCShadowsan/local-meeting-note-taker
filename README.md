@@ -8,7 +8,7 @@ It records disclosed meetings from a selected macOS audio input, transcribes loc
 
 - Native macOS app launcher with embedded WebKit window
 - Drag-to-Applications app bundle with bundled local app resources
-- First-run installer for required local dependencies
+- First-run setup window for required local dependencies
 - Local Whisper transcription
 - Local Ollama meeting summaries
 - Native macOS audio recording via `ffmpeg`/AVFoundation
@@ -30,9 +30,9 @@ Local Meeting Note Taker.app
 
 into `/Applications` and double-click it. The app bundle contains the local webapp resources under `Contents/Resources/local-meeting-note-taker`, so it does not need to stay beside the extracted release folder.
 
-On first launch, the app opens a Terminal installer if requirements are missing. It installs the app-local Python environment and runtime files inside the app bundle's resource directory. It can prepare:
+On first launch, the app opens a setup/loading window if requirements are missing. It installs the app-local Python environment and runtime files inside the app bundle's resource directory without opening a Terminal window for the normal setup path. It can prepare:
 
-- Homebrew, if missing and approved
+- Homebrew, if missing
 - `ffmpeg`
 - Ollama
 - Python 3.10+ when needed
@@ -40,7 +40,7 @@ On first launch, the app opens a Terminal installer if requirements are missing.
 - an Ollama summary model
 - the default Whisper speech model
 
-After setup, the app opens its own **Local Meeting Note Taker** window. It should not require Safari, Chrome, or another browser.
+After setup, the app opens its own **Local Meeting Note Taker** window and identifies itself that way in the macOS app menu. It should not require Safari, Chrome, Terminal, or another browser.
 
 ## Manual Install
 
@@ -103,6 +103,8 @@ The release workflow builds `LocalMeetingNoteTaker-redistributable.zip` and atta
 ├── Local Meeting Note Taker.app
 ├── INSTALL - Local Meeting Note Taker.command
 ├── OPEN ME - Local Meeting Note Taker.command
+├── macos/
+│   └── LocalMeetingNoteTakerBootstrap.swift
 ├── local-meeting-note-taker/
 │   ├── app.py
 │   ├── launcher.py

@@ -30,7 +30,7 @@ For distribution, use `LocalMeetingNoteTaker-redistributable.zip` from the GitHu
 
 On a fresh Mac, first launch can install these for the user:
 
-- Homebrew, if missing and the user approves it
+- Homebrew, if missing
 - `ffmpeg`
 - Ollama
 - Python 3.10+ when the system Python is missing or too old
@@ -61,7 +61,7 @@ Double-click either:
 - `Local Meeting Note Taker.app`
 - `Start Local Meeting Note Taker.command`
 
-The launcher checks whether requirements are ready. If not, it opens a Terminal first-run installer. After installation, it starts or reuses the local app server and opens a **Local Meeting Note Taker** desktop window. It should not open Safari, Chrome, or another external browser.
+The launcher checks whether requirements are ready. If not, it opens a first-run setup/loading window. After installation, it starts or reuses the local app server and opens a **Local Meeting Note Taker** desktop window. It should not open Safari, Chrome, Terminal, or another external browser for the normal app path.
 
 To stop the saved webapp process, double-click:
 
@@ -77,7 +77,7 @@ Or use the terminal commands:
 ./stop.sh
 ```
 
-Runtime logs are written to `data/logs/webapp.log`. The saved process id and selected port are kept in `data/app.pid` and `data/app.port`.
+Runtime logs are written to `data/logs/webapp.log`. First-run setup-window logs are written to `data/logs/setup-window.log`. The saved process id and selected port are kept in `data/app.pid` and `data/app.port`.
 
 Browser fallback, only if the native app window has trouble:
 
