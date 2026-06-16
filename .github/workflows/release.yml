@@ -30,6 +30,8 @@ jobs:
           bash -n local-meeting-note-taker/*.sh
           bash -n local-meeting-note-taker/*.command
           python3 -m py_compile local-meeting-note-taker/app.py local-meeting-note-taker/launcher.py
+          test -f macos/LocalMeetingNoteTaker.icns
+          file macos/LocalMeetingNoteTaker.icns | grep -F "Mac OS X icon"
           plutil -lint "Local Meeting Note Taker.app/Contents/Info.plist"
           plutil -lint "local-meeting-note-taker/Local Meeting Note Taker.app/Contents/Info.plist"
 
@@ -41,7 +43,9 @@ jobs:
           test -f LocalMeetingNoteTaker-redistributable.zip
           file ".package-work/Local Meeting Note Taker.app/Contents/MacOS/LocalMeetingNoteTaker" | grep -F "Mach-O"
           lipo -info ".package-work/Local Meeting Note Taker.app/Contents/MacOS/LocalMeetingNoteTaker"
+          test -f ".package-work/Local Meeting Note Taker.app/Contents/Resources/LocalMeetingNoteTaker.icns"
           unzip -l LocalMeetingNoteTaker-redistributable.zip
+          unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -F "Local Meeting Note Taker.app/Contents/Resources/LocalMeetingNoteTaker.icns"
           unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -F "Local Meeting Note Taker.app/Contents/Resources/local-meeting-note-taker/app.py"
           unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -F "Local Meeting Note Taker.app/Contents/Resources/local-meeting-note-taker/launch_app.sh"
           ! unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -F "Local Meeting Note Taker/local-meeting-note-taker/"
@@ -55,7 +59,12 @@ jobs:
         run: |
           test -f LocalMeetingNoteTaker-installer.pkg
           pkgutil --payload-files LocalMeetingNoteTaker-installer.pkg | grep -F "Applications/Local Meeting Note Taker.app/Contents/MacOS/LocalMeetingNoteTaker"
+          pkgutil --payload-files LocalMeetingNoteTaker-installer.pkg | grep -F "Applications/Local Meeting Note Taker.app/Contents/Resources/LocalMeetingNoteTaker.icns"
           pkgutil --payload-files LocalMeetingNoteTaker-installer.pkg | grep -F "Applications/Local Meeting Note Taker.app/Contents/Resources/local-meeting-note-taker/app.py"
+          rm -rf /tmp/lmnt-pkg-expanded
+          pkgutil --expand LocalMeetingNoteTaker-installer.pkg /tmp/lmnt-pkg-expanded
+          grep -F "./install_requirements.sh" /tmp/lmnt-pkg-expanded/Scripts/postinstall
+          grep -F "./check_ready.sh" /tmp/lmnt-pkg-expanded/Scripts/postinstall
 
       - name: Attach zip to release
         env:

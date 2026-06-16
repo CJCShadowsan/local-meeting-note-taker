@@ -10,6 +10,7 @@ APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_RESOURCE_ROOT="$APP_RESOURCES/local-meeting-note-taker"
 ZIP_PATH="$REPO_ROOT/LocalMeetingNoteTaker-redistributable.zip"
 BOOTSTRAP_SOURCE="$REPO_ROOT/macos/LocalMeetingNoteTakerBootstrap.swift"
+ICON_SOURCE="$REPO_ROOT/macos/LocalMeetingNoteTaker.icns"
 
 compile_bootstrap() {
   if ! command -v swiftc >/dev/null 2>&1; then
@@ -32,9 +33,16 @@ compile_bootstrap() {
 rm -rf "$WORK_DIR"
 mkdir -p "$APP_MACOS" "$APP_RESOURCE_ROOT"
 
+if [ ! -f "$ICON_SOURCE" ]; then
+  echo "Missing app icon: $ICON_SOURCE" >&2
+  exit 1
+fi
+
 rsync -a \
   "$REPO_ROOT/Local Meeting Note Taker.app/Contents/Info.plist" \
   "$APP_CONTENTS/Info.plist"
+
+rsync -a "$ICON_SOURCE" "$APP_RESOURCES/LocalMeetingNoteTaker.icns"
 
 compile_bootstrap
 

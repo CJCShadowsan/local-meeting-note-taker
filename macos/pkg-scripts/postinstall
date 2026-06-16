@@ -4,27 +4,135 @@ set -euo pipefail
 APP="/Applications/Local Meeting Note Taker.app"
 APP_RESOURCES="$APP/Contents/Resources/local-meeting-note-taker"
 CONSOLE_USER="$(/usr/bin/stat -f "%Su" /dev/console 2>/dev/null || true)"
+CONSOLE_UID=""
+CONSOLE_GROUP=""
+CONSOLE_HOME=""
+PKG_INSTALL_LOG="$APP_RESOURCES/data/logs/pkg-install.log"
+RUNNER=""
 
-if [ -d "$APP" ]; then
-  /usr/sbin/chown -R root:admin "$APP" 2>/dev/null || true
-  /bin/chmod -R u+rwX,go+rX "$APP" 2>/dev/null || true
-  /bin/chmod +x "$APP/Contents/MacOS/LocalMeetingNoteTaker" 2>/dev/null || true
+log() {
+  /bin/mkdir -p "$APP_RESOURCES/data/logs" 2>/dev/null || true
+  /bin/echo "[$(/bin/date '+%Y-%m-%d %H:%M:%S')] $1" >> "$PKG_INSTALL_LOG" 2>/dev/null || true
+}
 
-  if [ -d "$APP_RESOURCES" ]; then
-    /bin/mkdir -p "$APP_RESOURCES/data/logs" 2>/dev/null || true
-    /usr/bin/touch "$APP_RESOURCES/data/logs/setup-window.log" 2>/dev/null || true
+cleanup() {
+  if [ -n "$RUNNER" ] && [ -f "$RUNNER" ]; then
+    /bin/rm -f "$RUNNER" 2>/dev/null || true
+  fi
+}
 
-    if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
-      CONSOLE_GROUP="$(/usr/bin/id -gn "$CONSOLE_USER" 2>/dev/null || echo staff)"
-      /usr/sbin/chown -R "$CONSOLE_USER:$CONSOLE_GROUP" "$APP_RESOURCES" 2>/dev/null || true
-    fi
-    /bin/chmod -R u+rwX,go+rX "$APP_RESOURCES" 2>/dev/null || true
-    /usr/bin/find "$APP_RESOURCES" \
-      -type f \( -name "*.sh" -o -name "*.command" \) \
-      -exec /bin/chmod +x {} \; 2>/dev/null || true
+trap cleanup EXIT
+
+fail() {
+  log "$1"
+  /bin/echo "$1" >&2
+  exit 1
+}
+
+console_home_for_user() {
+  /usr/bin/dscl . -read "/Users/$1" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}'
+}
+
+prepare_homebrew_prefix_for_user() {
+  if [ -x /opt/homebrew/bin/brew ] || [ -x /usr/local/bin/brew ]; then
+    return 0
   fi
 
-  /usr/bin/xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
+  if [ "$(/usr/bin/uname -m)" = "arm64" ]; then
+    /bin/mkdir -p /opt/homebrew
+    /usr/sbin/chown "$CONSOLE_USER:admin" /opt/homebrew 2>/dev/null || true
+    /bin/chmod ug+rwx /opt/homebrew 2>/dev/null || true
+    return 0
+  fi
+
+  for dir in \
+    /usr/local/Homebrew \
+    /usr/local/Cellar \
+    /usr/local/Caskroom \
+    /usr/local/bin \
+    /usr/local/etc \
+    /usr/local/include \
+    /usr/local/lib \
+    /usr/local/opt \
+    /usr/local/sbin \
+    /usr/local/share \
+    /usr/local/var \
+    /usr/local/Frameworks
+  do
+    /bin/mkdir -p "$dir" 2>/dev/null || true
+    /usr/sbin/chown "$CONSOLE_USER:admin" "$dir" 2>/dev/null || true
+    /bin/chmod ug+rwx "$dir" 2>/dev/null || true
+  done
+}
+
+write_setup_runner() {
+  RUNNER="$APP_RESOURCES/data/logs/run-pkg-setup.sh"
+  {
+    printf '#!/bin/bash\n'
+    printf 'set -euo pipefail\n'
+    printf 'cd %q\n' "$APP_RESOURCES"
+    printf 'export HOME=%q\n' "$CONSOLE_HOME"
+    printf 'export USER=%q\n' "$CONSOLE_USER"
+    printf 'export LOGNAME=%q\n' "$CONSOLE_USER"
+    printf 'export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"\n'
+    printf 'export LMNT_ASSUME_YES=1\n'
+    printf 'export LMNT_MACHINE_PROGRESS=1\n'
+    printf 'export PYTHONUNBUFFERED=1\n'
+    printf 'export PYTHONIOENCODING=utf-8\n'
+    printf 'export NONINTERACTIVE=1\n'
+    printf 'export HOMEBREW_NO_ANALYTICS=1\n'
+    printf './install_requirements.sh\n'
+    printf './check_ready.sh\n'
+  } > "$RUNNER"
+  /bin/chmod +x "$RUNNER"
+}
+
+run_setup_as_console_user() {
+  log "Preparing required local components as $CONSOLE_USER"
+  if /bin/launchctl asuser "$CONSOLE_UID" /usr/bin/sudo -H -u "$CONSOLE_USER" "$RUNNER" >> "$PKG_INSTALL_LOG" 2>&1; then
+    return 0
+  fi
+
+  log "launchctl asuser setup path failed; retrying directly as $CONSOLE_USER"
+  /usr/bin/sudo -H -u "$CONSOLE_USER" "$RUNNER" >> "$PKG_INSTALL_LOG" 2>&1
+}
+
+[ -d "$APP" ] || fail "Local Meeting Note Taker.app was not installed at $APP."
+[ -d "$APP_RESOURCES" ] || fail "Local Meeting Note Taker resources were not installed at $APP_RESOURCES."
+
+if [ -z "$CONSOLE_USER" ] || [ "$CONSOLE_USER" = "root" ]; then
+  fail "Could not determine the logged-in macOS user for local setup."
 fi
+
+CONSOLE_UID="$(/usr/bin/id -u "$CONSOLE_USER" 2>/dev/null || true)"
+CONSOLE_GROUP="$(/usr/bin/id -gn "$CONSOLE_USER" 2>/dev/null || echo staff)"
+CONSOLE_HOME="$(console_home_for_user "$CONSOLE_USER")"
+[ -n "$CONSOLE_UID" ] || fail "Could not determine the user id for $CONSOLE_USER."
+[ -n "$CONSOLE_HOME" ] || fail "Could not determine the home directory for $CONSOLE_USER."
+
+/usr/sbin/chown -R root:admin "$APP" 2>/dev/null || true
+/bin/chmod -R u+rwX,go+rX "$APP" 2>/dev/null || true
+/bin/chmod +x "$APP/Contents/MacOS/LocalMeetingNoteTaker" 2>/dev/null || true
+
+/bin/mkdir -p "$APP_RESOURCES/data/logs" \
+  "$APP_RESOURCES/data/uploads" \
+  "$APP_RESOURCES/data/results" \
+  "$APP_RESOURCES/data/notes" \
+  "$APP_RESOURCES/data/native-recordings"
+/usr/bin/touch "$APP_RESOURCES/data/logs/setup-window.log" "$PKG_INSTALL_LOG"
+/usr/sbin/chown -R "$CONSOLE_USER:$CONSOLE_GROUP" "$APP_RESOURCES" 2>/dev/null || true
+/bin/chmod -R u+rwX,go+rX "$APP_RESOURCES" 2>/dev/null || true
+/usr/bin/find "$APP_RESOURCES" \
+  -type f \( -name "*.sh" -o -name "*.command" \) \
+  -exec /bin/chmod +x {} \; 2>/dev/null || true
+
+log "Starting package-installed setup"
+prepare_homebrew_prefix_for_user
+write_setup_runner
+run_setup_as_console_user || fail "Package setup failed. See $PKG_INSTALL_LOG for details."
+/usr/bin/touch "$APP_RESOURCES/data/.pkg-setup-complete"
+log "Package-installed setup completed"
+
+/usr/bin/xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
 
 exit 0

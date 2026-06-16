@@ -2,6 +2,7 @@
 __MACOSX/
 .package-work/
 .pkg-work/
+*.iconset/
 *.zip
 *.pkg
 *.tar.gz

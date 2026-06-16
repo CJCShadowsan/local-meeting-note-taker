@@ -11,15 +11,15 @@ It uses the same core pattern from the article:
 - Whisper running locally for transcription
 - Ollama running locally for meeting-minute summaries
 
-The app supports uploading audio/video files and recording from the app window microphone permissions. It starts a private local server behind the scenes, opens its own native app window, and saves Markdown notes and JSON results under `data/notes` and `data/results`.
+The app supports uploading audio/video files and recording from the selected macOS audio input. It starts a private local server behind the scenes, opens its own native app window, and saves Markdown notes and JSON results under `data/notes` and `data/results`.
 
 ## Application Shape
 
 This folder is the self-contained local webapp application. For source/manual runs, keep the whole `local-meeting-note-taker` folder together; the `.app` inside it is a launcher for the bundled webapp, Python environment, data folder, logs, and scripts.
 
-You can move the folder elsewhere on the same Mac. If you move it to another Mac, the first launch will run the installer so the Python environment and local dependencies match that machine.
+You can move the folder elsewhere on the same Mac. If you move it to another Mac manually, the first launch can run repair setup so the Python environment and local dependencies match that machine.
 
-For distribution, use `LocalMeetingNoteTaker-installer.pkg` from the GitHub release assets for the normal install path. It installs `Local Meeting Note Taker.app` into `/Applications`, makes the bundled runtime resource directory writable by the installing console user, sets executable permissions, and removes quarantine from the installed app path. The release also includes `LocalMeetingNoteTaker-redistributable.zip` for manual drag-to-Applications installs; GitHub's automatic source-code archive is not an app download.
+For distribution, use `LocalMeetingNoteTaker-installer.pkg` from the GitHub release assets for the normal install path. It installs `Local Meeting Note Taker.app` into `/Applications`, prepares all required local runtime components inside the installed app resource directory, sets executable permissions, and removes quarantine from the installed app path. The release also includes `LocalMeetingNoteTaker-redistributable.zip` for manual drag-to-Applications installs; GitHub's automatic source-code archive is not an app download.
 
 ## Requirements
 
@@ -28,7 +28,7 @@ For distribution, use `LocalMeetingNoteTaker-installer.pkg` from the GitHub rele
 - Homebrew, recommended for `ffmpeg` and Ollama
 - Enough disk space for Python packages and local AI models
 
-On a fresh Mac, first launch can install these for the user:
+On a fresh Mac, the package installer prepares these for the user:
 
 - Homebrew, if missing
 - `ffmpeg`
@@ -61,7 +61,7 @@ Double-click either:
 - `Local Meeting Note Taker.app`
 - `Start Local Meeting Note Taker.command`
 
-The launcher checks whether requirements are ready. If not, the redistributable app opens a first-run setup/loading window with stage progress. After installation, it starts or reuses the local app server and opens a **Local Meeting Note Taker** desktop window. The app requests macOS microphone permission at startup and uses the native recording bridge for live capture. It should not open Safari, Chrome, Terminal, or another external browser for the normal app path.
+The launcher checks whether requirements are ready. A package install should already have completed setup, so launching from `/Applications` starts or reuses the local app server and opens a **Local Meeting Note Taker** desktop window. If a manual zip install or damaged install is missing requirements, the app can still open a repair setup window. The app requests macOS microphone permission at startup and uses the native recording bridge for live capture. It should not open Safari, Chrome, Terminal, or another external browser for the normal app path.
 
 To stop the saved webapp process, double-click:
 
@@ -77,7 +77,7 @@ Or use the terminal commands:
 ./stop.sh
 ```
 
-Runtime logs are written to `data/logs/webapp.log`. First-run setup-window logs are written to `data/logs/setup-window.log`. The saved process id and selected port are kept in `data/app.pid` and `data/app.port`.
+Runtime logs are written to `data/logs/webapp.log`. Package install logs are written to `data/logs/pkg-install.log`, and repair setup-window logs are written to `data/logs/setup-window.log`. The saved process id and selected port are kept in `data/app.pid` and `data/app.port`.
 
 Browser fallback, only if the native app window has trouble:
 

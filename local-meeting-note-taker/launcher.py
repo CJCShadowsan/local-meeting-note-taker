@@ -27,7 +27,13 @@ NATIVE_RECORDINGS_DIR = DATA_DIR / "native-recordings"
 DEFAULT_PORT = int(os.getenv("APP_PORT", "5055"))
 APP_NAME = "Local Meeting Note Taker"
 APP_IDENTIFIER = "local.meeting.note.taker"
-APP_VERSION = "0.1.9"
+APP_VERSION = "0.1.10"
+APP_ICON_CANDIDATES = [
+    APP_ROOT.parent / "LocalMeetingNoteTaker.icns",
+    APP_ROOT / "Local Meeting Note Taker.app" / "Contents" / "Resources" / "LocalMeetingNoteTaker.icns",
+    APP_ROOT.parent / "Local Meeting Note Taker.app" / "Contents" / "Resources" / "LocalMeetingNoteTaker.icns",
+    APP_ROOT.parent / "macos" / "LocalMeetingNoteTaker.icns",
+]
 
 
 def app_path_env() -> str:
@@ -104,6 +110,13 @@ def print_url(port: int) -> None:
     print(f"Local Meeting Note Taker is running at {url}")
 
 
+def app_icon_path() -> Path | None:
+    for candidate in APP_ICON_CANDIDATES:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def desktop_log(message: str) -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -126,6 +139,12 @@ def configure_macos_app_identity() -> None:
         process = AppKit.NSProcessInfo.processInfo()
         if hasattr(process, "setProcessName_"):
             process.setProcessName_(APP_NAME)
+
+        icon_path = app_icon_path()
+        if icon_path is not None:
+            icon = AppKit.NSImage.alloc().initWithContentsOfFile_(str(icon_path))
+            if icon is not None:
+                AppKit.NSApplication.sharedApplication().setApplicationIconImage_(icon)
     except Exception as error:
         desktop_log(f"Could not set macOS app identity: {type(error).__name__}: {error}")
 

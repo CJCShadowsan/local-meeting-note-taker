@@ -7,8 +7,9 @@ It records disclosed meetings from a selected macOS audio input, transcribes loc
 ## Features
 
 - Native macOS app launcher with embedded WebKit window
+- Cassette-style macOS app icon for Finder, Installer, and Dock
 - Drag-to-Applications app bundle with bundled local app resources
-- First-run setup window with stage progress for required local dependencies
+- Installer-time setup for required local dependencies
 - Local Whisper transcription
 - Local Ollama meeting summaries
 - Native macOS audio recording via `ffmpeg`/AVFoundation
@@ -20,7 +21,7 @@ It records disclosed meetings from a selected macOS audio input, transcribes loc
 
 ## Quick Start
 
-From the GitHub release page, download **`LocalMeetingNoteTaker-installer.pkg`** for the easiest install. Double-click the package and follow macOS Installer; it installs **Local Meeting Note Taker.app** into `/Applications`, makes the bundled runtime resource directory writable by the installing console user, sets the app/helper script executable permissions, and removes quarantine from the installed app path.
+From the GitHub release page, download **`LocalMeetingNoteTaker-installer.pkg`** for the easiest install. Double-click the package and follow macOS Installer; it installs **Local Meeting Note Taker.app** into `/Applications`, prepares all required local runtime components inside the installed app resource directory, sets app/helper script executable permissions, and removes quarantine from the installed app path.
 
 The release also includes **`LocalMeetingNoteTaker-redistributable.zip`** for manual installs. A zip cannot auto-install when double-clicked on macOS; Archive Utility only extracts it. If using the zip, unzip it, then drag:
 
@@ -30,7 +31,7 @@ Local Meeting Note Taker.app
 
 into `/Applications` and double-click it. The app bundle contains the local webapp resources under `Contents/Resources/local-meeting-note-taker`, so it does not need to stay beside the extracted release folder.
 
-On first launch, the app opens a setup/loading window if requirements are missing. It installs the app-local Python environment and runtime files inside the app bundle's resource directory without opening a Terminal window for the normal setup path. The setup window shows stage progress and writes details to `data/logs/setup-window.log`. It can prepare:
+During package installation, setup can take several minutes on a fresh Mac because it prepares:
 
 - Homebrew, if missing
 - `ffmpeg`
@@ -40,7 +41,7 @@ On first launch, the app opens a setup/loading window if requirements are missin
 - an Ollama summary model
 - the default Whisper speech model
 
-After setup, the app opens its own **Local Meeting Note Taker** window and identifies itself that way in the macOS app menu. The app requests macOS microphone permission at startup, then uses the native recording bridge instead of WebKit browser microphone capture. It should not require Safari, Chrome, Terminal, or another browser.
+Installer setup details are written to `Contents/Resources/local-meeting-note-taker/data/logs/pkg-install.log` inside the installed app. After installation, the app opens its own **Local Meeting Note Taker** window and identifies itself that way in the macOS app menu. The app requests macOS microphone permission at startup, then uses the native recording bridge instead of WebKit browser microphone capture. It should not require Safari, Chrome, Terminal, or another browser.
 
 ## Manual Install
 
@@ -81,7 +82,7 @@ From the repo root:
 ./package_installer.sh
 ```
 
-The generated zip contains a single self-contained `Local Meeting Note Taker.app`. The generated pkg installs that app into `/Applications` and runs a postinstall permission/quarantine cleanup for the installed app, including making `Contents/Resources/local-meeting-note-taker` writable for first-run local dependency setup. Both artifacts exclude local `.venv`, logs, notes, uploads, recordings, and machine-specific PID/port files.
+The generated zip contains a single self-contained `Local Meeting Note Taker.app`. The generated pkg installs that app into `/Applications`, makes `Contents/Resources/local-meeting-note-taker` writable for the logged-in user, runs dependency/model setup during installation, and removes quarantine from the installed app. Both artifacts exclude local `.venv`, logs, notes, uploads, recordings, and machine-specific PID/port files.
 
 ## Release Automation
 
@@ -90,9 +91,9 @@ GitHub Actions builds the redistributable pkg and zip only when a GitHub Release
 To publish a release:
 
 ```bash
-git tag v0.1.1
-git push origin v0.1.1
-gh release create v0.1.1 --title "Local Meeting Note Taker v0.1.1" --notes "Release notes"
+git tag v0.1.10
+git push origin v0.1.10
+gh release create v0.1.10 --title "Local Meeting Note Taker v0.1.10" --notes "Release notes"
 ```
 
 The release workflow builds `LocalMeetingNoteTaker-installer.pkg` and `LocalMeetingNoteTaker-redistributable.zip`, then attaches both to that release.
@@ -105,6 +106,8 @@ The release workflow builds `LocalMeetingNoteTaker-installer.pkg` and `LocalMeet
 ├── INSTALL - Local Meeting Note Taker.command
 ├── OPEN ME - Local Meeting Note Taker.command
 ├── macos/
+│   ├── LocalMeetingNoteTaker.icns
+│   ├── LocalMeetingNoteTakerIcon.svg
 │   ├── LocalMeetingNoteTakerBootstrap.swift
 │   └── pkg-scripts/
 ├── local-meeting-note-taker/
