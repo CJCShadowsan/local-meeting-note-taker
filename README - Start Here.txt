@@ -5,6 +5,8 @@ Double-click:
 
   Local Meeting Note Taker.app
 
+You may drag Local Meeting Note Taker.app into /Applications first. The app contains its own local app resources and will install its Python environment inside the app bundle on first launch.
+
 If first-run setup is needed, the app opens a Terminal installer. That installer prepares:
 
   - Homebrew, if missing and approved
@@ -19,5 +21,4 @@ If the app needs repair, double-click:
 
   INSTALL - Local Meeting Note Taker.command
 
-Keep the local-meeting-note-taker folder beside the app launcher. It contains the bundled app code, local environment, data, notes, and logs.
-
+The sidecar local-meeting-note-taker folder is included for manual repair/source use, but the top-level app does not need it after being dragged to /Applications.

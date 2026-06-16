@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OUTPUTS_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
-APP_ROOT="$OUTPUTS_DIR/local-meeting-note-taker"
+APP_BUNDLE="$(cd "$(dirname "$0")/../.." && pwd)"
+APP_PARENT="$(cd "$APP_BUNDLE/.." && pwd)"
+RESOURCE_APP_ROOT="$APP_BUNDLE/Contents/Resources/local-meeting-note-taker"
+SIDECAR_APP_ROOT="$APP_PARENT/local-meeting-note-taker"
+
+if [ -x "$RESOURCE_APP_ROOT/launch_app.sh" ]; then
+  APP_ROOT="$RESOURCE_APP_ROOT"
+elif [ -x "$SIDECAR_APP_ROOT/launch_app.sh" ]; then
+  APP_ROOT="$SIDECAR_APP_ROOT"
+else
+  echo "Local Meeting Note Taker resources were not found."
+  echo "Expected: $RESOURCE_APP_ROOT"
+  exit 1
+fi
+
 exec "$APP_ROOT/launch_app.sh"

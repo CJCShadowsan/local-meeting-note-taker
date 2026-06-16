@@ -7,6 +7,7 @@ It records disclosed meetings from a selected macOS audio input, transcribes loc
 ## Features
 
 - Native macOS app launcher with embedded WebKit window
+- Drag-to-Applications app bundle with bundled local app resources
 - First-run installer for required local dependencies
 - Local Whisper transcription
 - Local Ollama meeting summaries
@@ -19,13 +20,15 @@ It records disclosed meetings from a selected macOS audio input, transcribes loc
 
 ## Quick Start
 
-Download or clone the repo, then double-click:
+Download the release zip, unzip it, then drag:
 
 ```text
 Local Meeting Note Taker.app
 ```
 
-On first launch, the app opens a Terminal installer if requirements are missing. It can prepare:
+into `/Applications` and double-click it. The app bundle contains the local webapp resources under `Contents/Resources/local-meeting-note-taker`, so it does not need to stay beside the extracted release folder.
+
+On first launch, the app opens a Terminal installer if requirements are missing. It installs the app-local Python environment and runtime files inside the app bundle's resource directory. It can prepare:
 
 - Homebrew, if missing and approved
 - `ffmpeg`

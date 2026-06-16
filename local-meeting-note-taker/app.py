@@ -14,7 +14,7 @@ from typing import Any
 from urllib.parse import quote
 
 import requests
-from flask import Flask, jsonify, render_template, request, send_file
+from flask import Flask, Response, jsonify, render_template, request, send_file
 from werkzeug.utils import secure_filename
 
 
@@ -464,44 +464,114 @@ def delete_source_audio(file_path: Path) -> bool:
         return False
 
 
-def note_path_from_name(name: str) -> Path | None:
-    if Path(name).name != name or Path(name).suffix.lower() != ".md":
+def safe_history_name(name: str) -> str | None:
+    path = Path(name)
+    if path.name != name or path.suffix.lower() not in {".md", ".json"}:
         return None
-    return NOTES_DIR / name
+    return name
 
 
-def note_payload(path: Path) -> dict[str, Any]:
+def history_paths_from_name(name: str) -> tuple[Path, Path] | None:
+    safe_name = safe_history_name(name)
+    if not safe_name:
+        return None
+    stem = Path(safe_name).stem
+    return NOTES_DIR / f"{stem}.md", RESULTS_DIR / f"{stem}.json"
+
+
+def read_result_metadata(result_path: Path) -> dict[str, Any]:
+    if not result_path.exists():
+        return {}
+    try:
+        data = json.loads(result_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def history_display_name(path: Path, metadata: dict[str, Any]) -> str:
+    title = str(metadata.get("title") or "").strip()
+    return title or path.name
+
+
+def history_payload(path: Path) -> dict[str, Any]:
+    result_path = RESULTS_DIR / f"{path.stem}.json"
+    metadata = read_result_metadata(result_path)
     stat = path.stat()
     encoded_name = quote(path.name, safe="")
+    kind = "note" if path.suffix.lower() == ".md" else "transcript"
+    source = str(metadata.get("source_filename") or "").strip()
     return {
         "name": path.name,
+        "display_name": history_display_name(path, metadata),
+        "description": source or path.name,
+        "kind": kind,
         "size": stat.st_size,
         "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
-        "markdown_download": f"/notes/{encoded_name}/download",
-        "delete_url": f"/notes/{encoded_name}",
+        "markdown_download": f"/history/{encoded_name}/download",
+        "delete_url": f"/history/{encoded_name}/delete",
     }
 
 
-def related_note_artifacts(markdown_path: Path) -> list[tuple[str, Path]]:
-    candidates: list[tuple[str, Path]] = [("markdown", markdown_path)]
-    result_path = RESULTS_DIR / f"{markdown_path.stem}.json"
+def markdown_from_result(result_path: Path) -> str:
+    metadata = read_result_metadata(result_path)
+    title = str(metadata.get("title") or Path(metadata.get("source_filename") or result_path.stem).stem)
+    source = str(metadata.get("source_filename") or "Unknown")
+    created = str(metadata.get("created_at") or datetime.fromtimestamp(result_path.stat().st_mtime).isoformat())
+    try:
+        duration_seconds = float(metadata.get("duration_seconds") or 0)
+    except (TypeError, ValueError):
+        duration_seconds = 0
+    duration = format_seconds(duration_seconds)
+    summary_mode = str(metadata.get("summary_mode") or "unknown")
+    participants_notified = str(bool(metadata.get("participants_notified"))).lower()
+    delete_audio = str(bool(metadata.get("delete_source_audio"))).lower()
+    minutes = str(metadata.get("minutes") or "# Meeting Minutes\n\nNo meeting minutes were saved.")
+    transcript = str(metadata.get("transcript") or "")
+
+    return f"""---
+title: {title}
+source: {source}
+created: {created}
+duration: {duration}
+summary_mode: {summary_mode}
+participants_notified: {participants_notified}
+delete_source_audio: {delete_audio}
+---
+
+{minutes}
+
+---
+
+# Full Transcript
+
+```text
+{transcript}
+```
+"""
+
+
+def valid_job_id(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def related_history_artifacts(markdown_path: Path, result_path: Path) -> list[tuple[str, Path]]:
+    candidates: list[tuple[str, Path]] = [("markdown", markdown_path), ("result", result_path)]
     job_id = ""
     source_filename = ""
 
-    if result_path.exists():
-        candidates.append(("result", result_path))
-        try:
-            metadata = json.loads(result_path.read_text(encoding="utf-8"))
-            job_id = str(metadata.get("job_id") or "")
-            source_filename = secure_filename(str(metadata.get("source_filename") or ""))
-        except Exception:
-            job_id = ""
-            source_filename = ""
+    metadata = read_result_metadata(result_path)
+    if metadata:
+        job_id = str(metadata.get("job_id") or "")
+        source_filename = secure_filename(str(metadata.get("source_filename") or ""))
 
-    valid_job_id = bool(re.fullmatch(r"[0-9a-fA-F-]{32,36}", job_id))
-    if valid_job_id and source_filename:
+    if valid_job_id(job_id) and source_filename:
         candidates.append(("uploaded_audio", UPLOAD_DIR / f"{job_id}-{source_filename}"))
-    elif valid_job_id:
+    elif valid_job_id(job_id):
         candidates.extend(("uploaded_audio", path) for path in UPLOAD_DIR.glob(f"{job_id}-*"))
 
     if source_filename:
@@ -630,28 +700,50 @@ def health() -> Any:
 @app.get("/notes")
 def list_notes() -> Any:
     notes = []
-    for path in sorted(NOTES_DIR.glob("*.md"), reverse=True):
-        notes.append(note_payload(path))
+    noted_stems = set()
+    for path in NOTES_DIR.glob("*.md"):
+        notes.append(history_payload(path))
+        noted_stems.add(path.stem)
+    for path in RESULTS_DIR.glob("*.json"):
+        if path.stem not in noted_stems:
+            notes.append(history_payload(path))
+    notes.sort(key=lambda item: str(item["modified"]), reverse=True)
     return jsonify({"notes": notes, "count": len(notes)})
+
+
+@app.get("/history/<path:name>/download")
+def download_history_markdown(name: str) -> Any:
+    paths = history_paths_from_name(name)
+    if not paths:
+        return jsonify({"error": "Saved transcript was not found."}), 404
+
+    markdown_path, result_path = paths
+    if markdown_path.exists():
+        return send_file(markdown_path, as_attachment=True, download_name=markdown_path.name)
+    if result_path.exists():
+        response = Response(markdown_from_result(result_path), mimetype="text/markdown")
+        response.headers.set("Content-Disposition", "attachment", filename=f"{result_path.stem}.md")
+        return response
+    return jsonify({"error": "Saved transcript was not found."}), 404
 
 
 @app.get("/notes/<path:name>/download")
 def download_note(name: str) -> Any:
-    note_path = note_path_from_name(name)
-    if not note_path or not note_path.exists():
-        return jsonify({"error": "Saved note was not found."}), 404
-    return send_file(note_path, as_attachment=True, download_name=note_path.name)
+    return download_history_markdown(name)
 
 
-@app.delete("/notes/<path:name>")
-def delete_note(name: str) -> Any:
-    note_path = note_path_from_name(name)
-    if not note_path or not note_path.exists():
-        return jsonify({"error": "Saved note was not found."}), 404
+def delete_history_item(name: str) -> Any:
+    paths = history_paths_from_name(name)
+    if not paths:
+        return jsonify({"error": "Saved transcript was not found."}), 404
+
+    markdown_path, result_path = paths
+    if not markdown_path.exists() and not result_path.exists():
+        return jsonify({"error": "Saved transcript was not found."}), 404
 
     deleted = []
     failed = []
-    for label, artifact_path in related_note_artifacts(note_path):
+    for label, artifact_path in related_history_artifacts(markdown_path, result_path):
         if not artifact_path.exists():
             continue
         try:
@@ -668,6 +760,21 @@ def delete_note(name: str) -> Any:
 
     status_code = 500 if failed else 200
     return jsonify({"deleted": deleted, "failed": failed}), status_code
+
+
+@app.post("/history/<path:name>/delete")
+def post_delete_history(name: str) -> Any:
+    return delete_history_item(name)
+
+
+@app.delete("/history/<path:name>")
+def delete_history(name: str) -> Any:
+    return delete_history_item(name)
+
+
+@app.delete("/notes/<path:name>")
+def delete_note(name: str) -> Any:
+    return delete_history_item(name)
 
 
 @app.post("/upload")

@@ -45,6 +45,7 @@ const state = {
   recordStartedAt: 0,
   timerId: null,
   isBusy: false,
+  pendingDelete: null,
   nativeRecording: false,
   nativeApiReady: false,
 };
@@ -259,20 +260,35 @@ async function copyDisclosure() {
   }, 1400);
 }
 
-async function deleteNote(note) {
-  const confirmed = window.confirm(`Delete "${note.name}" and its saved artifacts?`);
-  if (!confirmed) return;
+async function deleteNote(note, button) {
+  if (state.pendingDelete !== note.name) {
+    state.pendingDelete = note.name;
+    button.textContent = "Confirm delete";
+    window.setTimeout(() => {
+      if (state.pendingDelete === note.name) {
+        state.pendingDelete = null;
+        button.textContent = "Delete";
+      }
+    }, 4500);
+    return;
+  }
 
   try {
-    const response = await fetch(note.delete_url || `/notes/${encodeURIComponent(note.name)}`, {
-      method: "DELETE",
+    button.disabled = true;
+    button.textContent = "Deleting";
+    const response = await fetch(note.delete_url || `/history/${encodeURIComponent(note.name)}/delete`, {
+      method: "POST",
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Delete failed");
+    state.pendingDelete = null;
     await loadNotes();
-    setStatus(`Deleted ${note.name}`, null);
+    setStatus(`Deleted ${note.display_name || note.name}`, null);
   } catch (error) {
-    setStatus(error.message || "Could not delete note.", null);
+    button.disabled = false;
+    button.textContent = "Delete";
+    state.pendingDelete = null;
+    setStatus(error.message || "Could not delete transcript.", null);
   }
 }
 
@@ -326,8 +342,11 @@ async function loadNotes() {
 
       info.className = "note-info";
       actions.className = "note-actions";
-      name.textContent = note.name;
-      meta.textContent = `${fileSize(note.size)} - ${note.modified || "saved"}`;
+      name.textContent = note.display_name || note.name;
+      meta.textContent = `${note.kind || "note"} - ${fileSize(note.size)} - ${note.modified || "saved"}`;
+      if (note.description && note.description !== note.name && note.description !== note.display_name) {
+        meta.textContent = `${meta.textContent} - ${note.description}`;
+      }
 
       download.className = "download-link secondary note-action";
       download.href = note.markdown_download || `/notes/${encodeURIComponent(note.name)}/download`;
@@ -336,7 +355,7 @@ async function loadNotes() {
       deleteButton.className = "secondary danger note-action";
       deleteButton.type = "button";
       deleteButton.textContent = "Delete";
-      deleteButton.addEventListener("click", () => deleteNote(note));
+      deleteButton.addEventListener("click", () => deleteNote(note, deleteButton));
 
       info.append(name, meta);
       actions.append(download, deleteButton);

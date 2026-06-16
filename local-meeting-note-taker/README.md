@@ -15,11 +15,11 @@ The app supports uploading audio/video files and recording from the app window m
 
 ## Application Shape
 
-This folder is the self-contained local webapp application. Keep the whole `local-meeting-note-taker` folder together; the `.app` inside it is a launcher for the bundled webapp, Python environment, data folder, logs, and scripts.
+This folder is the self-contained local webapp application. For source/manual runs, keep the whole `local-meeting-note-taker` folder together; the `.app` inside it is a launcher for the bundled webapp, Python environment, data folder, logs, and scripts.
 
 You can move the folder elsewhere on the same Mac. If you move it to another Mac, the first launch will run the installer so the Python environment and local dependencies match that machine.
 
-For distribution, share the whole `outputs` folder or zip it. The top-level `Local Meeting Note Taker.app` launches the app, and `INSTALL - Local Meeting Note Taker.command` is an explicit installer/repair launcher.
+For distribution, use the release zip. The top-level `Local Meeting Note Taker.app` includes its own copy of this folder under `Contents/Resources/local-meeting-note-taker`, so users can drag the app to `/Applications` and launch it without keeping a sidecar folder beside it. `INSTALL - Local Meeting Note Taker.command` remains available as an explicit installer/repair launcher.
 
 ## Requirements
 
@@ -170,7 +170,7 @@ Each completed run creates:
 - JSON with transcript segments and settings in `data/results`
 - Uploaded source files in `data/uploads` only when source-audio deletion is disabled
 
-The app's **History** section lists saved notes. Use **Markdown** to download a saved `.md` note, or **Delete** to remove the note, JSON result, uploaded source copy, and retained native recording when those artifacts are available.
+The app's **History** section lists saved notes and older JSON-only transcript results. Use **Markdown** to download a saved `.md` note or generated Markdown transcript, or **Delete** then **Confirm delete** to remove the note, JSON result, uploaded source copy, and retained native recording when those artifacts are available.
 
 If Ollama is not running, the app still transcribes audio and writes fallback notes with the transcript.
 

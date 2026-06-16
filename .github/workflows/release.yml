@@ -23,6 +23,8 @@ jobs:
           bash -n package_redistributable.sh
           bash -n "INSTALL - Local Meeting Note Taker.command"
           bash -n "OPEN ME - Local Meeting Note Taker.command"
+          bash -n "Local Meeting Note Taker.app/Contents/MacOS/LocalMeetingNoteTaker"
+          bash -n "local-meeting-note-taker/Local Meeting Note Taker.app/Contents/MacOS/LocalMeetingNoteTaker"
           bash -n local-meeting-note-taker/*.sh
           bash -n local-meeting-note-taker/*.command
           python3 -m py_compile local-meeting-note-taker/app.py local-meeting-note-taker/launcher.py
@@ -36,6 +38,8 @@ jobs:
         run: |
           test -f LocalMeetingNoteTaker-redistributable.zip
           unzip -l LocalMeetingNoteTaker-redistributable.zip
+          unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -F "Local Meeting Note Taker/Local Meeting Note Taker.app/Contents/Resources/local-meeting-note-taker/app.py"
+          unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -F "Local Meeting Note Taker/Local Meeting Note Taker.app/Contents/Resources/local-meeting-note-taker/launch_app.sh"
           ! unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -E '(^|/)(\.git|\.github|\.venv|__pycache__|\.package-work)(/|$)'
           ! unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -E 'data/(uploads|notes|results|logs|native-recordings)/.+'
 
@@ -46,4 +50,3 @@ jobs:
           gh release upload "${{ github.event.release.tag_name }}" \
             LocalMeetingNoteTaker-redistributable.zip \
             --clobber
-

@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+APP_BUNDLE="$(cd "$(dirname "$0")/../.." && pwd)"
+APP_PARENT="$(cd "$APP_BUNDLE/.." && pwd)"
+RESOURCE_APP_ROOT="$APP_BUNDLE/Contents/Resources/local-meeting-note-taker"
+
+if [ -x "$RESOURCE_APP_ROOT/launch_app.sh" ]; then
+  APP_ROOT="$RESOURCE_APP_ROOT"
+else
+  APP_ROOT="$APP_PARENT"
+fi
+
 exec "$APP_ROOT/launch_app.sh"
