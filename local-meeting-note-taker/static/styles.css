@@ -67,6 +67,15 @@ button:disabled {
   border-color: var(--line);
 }
 
+.danger {
+  color: var(--terracotta);
+  border-color: #edc6bc;
+}
+
+.danger:hover {
+  background: var(--soft-red);
+}
+
 .icon-button {
   width: 40px;
   min-width: 40px;
@@ -372,6 +381,7 @@ h2 {
 
 .notes-list li {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 14px;
   border: 1px solid var(--line);
@@ -380,9 +390,28 @@ h2 {
   color: var(--muted);
 }
 
+.note-info {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
 .notes-list strong {
   color: var(--ink);
   overflow-wrap: anywhere;
+}
+
+.note-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.note-action {
+  min-height: 36px;
+  padding: 0 12px;
 }
 
 @media (max-width: 820px) {
@@ -416,5 +445,13 @@ h2 {
 
   .icon-button {
     width: 40px;
+  }
+
+  .notes-list li {
+    display: grid;
+  }
+
+  .note-actions {
+    justify-content: stretch;
   }
 }

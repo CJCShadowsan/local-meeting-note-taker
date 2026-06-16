@@ -5,6 +5,8 @@ __pycache__/
 data/uploads/*
 data/results/*
 data/notes/*
+data/native-recordings/*
 !data/uploads/.gitkeep
 !data/results/.gitkeep
 !data/notes/.gitkeep
+!data/native-recordings/.gitkeep

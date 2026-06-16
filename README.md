@@ -14,6 +14,7 @@ It records disclosed meetings from a selected macOS audio input, transcribes loc
 - Upload existing audio/video recordings
 - Participant-disclosure gate before capture
 - Source-audio deletion enabled by default
+- History view for downloading Markdown notes and deleting saved conversations
 - Redistributable zip packaging script
 
 ## Quick Start

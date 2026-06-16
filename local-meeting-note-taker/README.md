@@ -170,6 +170,8 @@ Each completed run creates:
 - JSON with transcript segments and settings in `data/results`
 - Uploaded source files in `data/uploads` only when source-audio deletion is disabled
 
+The app's **History** section lists saved notes. Use **Markdown** to download a saved `.md` note, or **Delete** to remove the note, JSON result, uploaded source copy, and retained native recording when those artifacts are available.
+
 If Ollama is not running, the app still transcribes audio and writes fallback notes with the transcript.
 
 ## Privacy Notes

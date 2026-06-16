@@ -259,6 +259,23 @@ async function copyDisclosure() {
   }, 1400);
 }
 
+async function deleteNote(note) {
+  const confirmed = window.confirm(`Delete "${note.name}" and its saved artifacts?`);
+  if (!confirmed) return;
+
+  try {
+    const response = await fetch(note.delete_url || `/notes/${encodeURIComponent(note.name)}`, {
+      method: "DELETE",
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Delete failed");
+    await loadNotes();
+    setStatus(`Deleted ${note.name}`, null);
+  } catch (error) {
+    setStatus(error.message || "Could not delete note.", null);
+  }
+}
+
 async function loadHealth() {
   elements.healthChips.innerHTML = "";
   try {
@@ -300,11 +317,30 @@ async function loadNotes() {
     }
     data.notes.forEach((note) => {
       const item = document.createElement("li");
+      const info = document.createElement("div");
+      const actions = document.createElement("div");
       const name = document.createElement("strong");
       const meta = document.createElement("span");
+      const download = document.createElement("a");
+      const deleteButton = document.createElement("button");
+
+      info.className = "note-info";
+      actions.className = "note-actions";
       name.textContent = note.name;
-      meta.textContent = fileSize(note.size);
-      item.append(name, meta);
+      meta.textContent = `${fileSize(note.size)} - ${note.modified || "saved"}`;
+
+      download.className = "download-link secondary note-action";
+      download.href = note.markdown_download || `/notes/${encodeURIComponent(note.name)}/download`;
+      download.textContent = "Markdown";
+
+      deleteButton.className = "secondary danger note-action";
+      deleteButton.type = "button";
+      deleteButton.textContent = "Delete";
+      deleteButton.addEventListener("click", () => deleteNote(note));
+
+      info.append(name, meta);
+      actions.append(download, deleteButton);
+      item.append(info, actions);
       elements.notesList.appendChild(item);
     });
   } catch {

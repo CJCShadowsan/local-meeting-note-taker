@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import requests
 from flask import Flask, jsonify, render_template, request, send_file
@@ -22,8 +23,9 @@ DATA_DIR = BASE_DIR / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 RESULTS_DIR = DATA_DIR / "results"
 NOTES_DIR = DATA_DIR / "notes"
+NATIVE_RECORDINGS_DIR = DATA_DIR / "native-recordings"
 
-for folder in (UPLOAD_DIR, RESULTS_DIR, NOTES_DIR):
+for folder in (UPLOAD_DIR, RESULTS_DIR, NOTES_DIR, NATIVE_RECORDINGS_DIR):
     folder.mkdir(parents=True, exist_ok=True)
 
 
@@ -462,6 +464,60 @@ def delete_source_audio(file_path: Path) -> bool:
         return False
 
 
+def note_path_from_name(name: str) -> Path | None:
+    if Path(name).name != name or Path(name).suffix.lower() != ".md":
+        return None
+    return NOTES_DIR / name
+
+
+def note_payload(path: Path) -> dict[str, Any]:
+    stat = path.stat()
+    encoded_name = quote(path.name, safe="")
+    return {
+        "name": path.name,
+        "size": stat.st_size,
+        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+        "markdown_download": f"/notes/{encoded_name}/download",
+        "delete_url": f"/notes/{encoded_name}",
+    }
+
+
+def related_note_artifacts(markdown_path: Path) -> list[tuple[str, Path]]:
+    candidates: list[tuple[str, Path]] = [("markdown", markdown_path)]
+    result_path = RESULTS_DIR / f"{markdown_path.stem}.json"
+    job_id = ""
+    source_filename = ""
+
+    if result_path.exists():
+        candidates.append(("result", result_path))
+        try:
+            metadata = json.loads(result_path.read_text(encoding="utf-8"))
+            job_id = str(metadata.get("job_id") or "")
+            source_filename = secure_filename(str(metadata.get("source_filename") or ""))
+        except Exception:
+            job_id = ""
+            source_filename = ""
+
+    valid_job_id = bool(re.fullmatch(r"[0-9a-fA-F-]{32,36}", job_id))
+    if valid_job_id and source_filename:
+        candidates.append(("uploaded_audio", UPLOAD_DIR / f"{job_id}-{source_filename}"))
+    elif valid_job_id:
+        candidates.extend(("uploaded_audio", path) for path in UPLOAD_DIR.glob(f"{job_id}-*"))
+
+    if source_filename:
+        candidates.append(("native_recording", NATIVE_RECORDINGS_DIR / source_filename))
+
+    unique: list[tuple[str, Path]] = []
+    seen: set[Path] = set()
+    for label, path in candidates:
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique.append((label, path))
+    return unique
+
+
 def process_audio_file(job_id: str, file_path: Path, original_filename: str, title: str, settings: dict[str, Any]) -> None:
     try:
         update_job(job_id, status="running", phase="Preparing audio", progress=5)
@@ -574,15 +630,44 @@ def health() -> Any:
 @app.get("/notes")
 def list_notes() -> Any:
     notes = []
-    for path in sorted(NOTES_DIR.glob("*.md"), reverse=True)[:12]:
-        notes.append(
-            {
-                "name": path.name,
-                "size": path.stat().st_size,
-                "modified": datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"),
-            }
-        )
-    return jsonify({"notes": notes})
+    for path in sorted(NOTES_DIR.glob("*.md"), reverse=True):
+        notes.append(note_payload(path))
+    return jsonify({"notes": notes, "count": len(notes)})
+
+
+@app.get("/notes/<path:name>/download")
+def download_note(name: str) -> Any:
+    note_path = note_path_from_name(name)
+    if not note_path or not note_path.exists():
+        return jsonify({"error": "Saved note was not found."}), 404
+    return send_file(note_path, as_attachment=True, download_name=note_path.name)
+
+
+@app.delete("/notes/<path:name>")
+def delete_note(name: str) -> Any:
+    note_path = note_path_from_name(name)
+    if not note_path or not note_path.exists():
+        return jsonify({"error": "Saved note was not found."}), 404
+
+    deleted = []
+    failed = []
+    for label, artifact_path in related_note_artifacts(note_path):
+        if not artifact_path.exists():
+            continue
+        try:
+            artifact_path.unlink()
+            deleted.append({"kind": label, "name": artifact_path.name})
+        except Exception as error:
+            failed.append(
+                {
+                    "kind": label,
+                    "name": artifact_path.name,
+                    "error": f"{type(error).__name__}: {error}",
+                }
+            )
+
+    status_code = 500 if failed else 200
+    return jsonify({"deleted": deleted, "failed": failed}), status_code
 
 
 @app.post("/upload")
