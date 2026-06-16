@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import os
 import json
 import signal
@@ -27,7 +28,7 @@ NATIVE_RECORDINGS_DIR = DATA_DIR / "native-recordings"
 DEFAULT_PORT = int(os.getenv("APP_PORT", "5055"))
 APP_NAME = "Local Meeting Note Taker"
 APP_IDENTIFIER = "local.meeting.note.taker"
-APP_VERSION = "0.1.10"
+APP_VERSION = "0.1.11"
 APP_ICON_CANDIDATES = [
     APP_ROOT.parent / "LocalMeetingNoteTaker.icns",
     APP_ROOT / "Local Meeting Note Taker.app" / "Contents" / "Resources" / "LocalMeetingNoteTaker.icns",
@@ -139,12 +140,6 @@ def configure_macos_app_identity() -> None:
         process = AppKit.NSProcessInfo.processInfo()
         if hasattr(process, "setProcessName_"):
             process.setProcessName_(APP_NAME)
-
-        icon_path = app_icon_path()
-        if icon_path is not None:
-            icon = AppKit.NSImage.alloc().initWithContentsOfFile_(str(icon_path))
-            if icon is not None:
-                AppKit.NSApplication.sharedApplication().setApplicationIconImage_(icon)
     except Exception as error:
         desktop_log(f"Could not set macOS app identity: {type(error).__name__}: {error}")
 
@@ -317,12 +312,13 @@ def start_server() -> tuple[int, int | None, bool]:
 
     saved_pid = read_int(PID_FILE)
     saved_port = read_int(PORT_FILE) or DEFAULT_PORT
+    if server_matches_this_app(saved_port):
+        return saved_port, saved_pid, False
+
     if saved_pid and pid_is_running(saved_pid):
-        if server_matches_this_app(saved_port):
-            return saved_port, saved_pid, False
         append_log(
             LOG_FILE,
-            f"Ignoring saved server pid={saved_pid} port={saved_port}; it does not match this app bundle.",
+            f"Ignoring saved server pid={saved_pid} port={saved_port}; it is not serving this app bundle.",
         )
 
     if server_matches_this_app(DEFAULT_PORT):
@@ -374,6 +370,69 @@ def open_browser(port: int, no_open: bool) -> None:
         webbrowser.open(f"http://127.0.0.1:{port}")
 
 
+def shell_html(title: str, message: str, detail: str = "") -> str:
+    title_text = html.escape(title)
+    message_text = html.escape(message)
+    detail_text = html.escape(detail)
+    detail_markup = f"<p class=\"detail\">{detail_text}</p>" if detail_text else ""
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      body {{
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #f5f6f8;
+        color: #17212b;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }}
+      main {{
+        width: min(560px, calc(100vw - 48px));
+        border: 1px solid #d9dee5;
+        border-radius: 8px;
+        background: #ffffff;
+        padding: 28px;
+        box-shadow: 0 18px 50px rgba(23, 33, 43, 0.08);
+      }}
+      h1 {{
+        margin: 0 0 10px;
+        font-size: 22px;
+      }}
+      p {{
+        margin: 0;
+        color: #65717f;
+        line-height: 1.5;
+      }}
+      .detail {{
+        margin-top: 14px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        word-break: break-word;
+      }}
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>{title_text}</h1>
+      <p>{message_text}</p>
+      {detail_markup}
+    </main>
+  </body>
+</html>"""
+
+
+def wait_for_desktop_server(port: int) -> bool:
+    for _ in range(30):
+        if server_matches_this_app(port):
+            return True
+        time.sleep(0.25)
+    return False
+
+
 def open_desktop_window(port: int) -> int:
     configure_macos_app_identity()
     try:
@@ -389,17 +448,35 @@ def open_desktop_window(port: int) -> int:
     print(f"Opening {APP_NAME} app window at {url}")
     desktop_log(f"Opening native app window at {url}")
     try:
-        webview.create_window(
+        window = webview.create_window(
             APP_NAME,
-            url,
+            html=shell_html("Starting Local Meeting Note Taker", "Opening the local app interface..."),
             js_api=NativeRecorderApi(port),
             width=1260,
             height=900,
             min_size=(900, 650),
             confirm_close=False,
             text_select=True,
+            background_color="#f5f6f8",
         )
-        webview.start(debug=os.getenv("WEBVIEW_DEBUG", "") == "1")
+
+        def load_local_app() -> None:
+            if wait_for_desktop_server(port):
+                desktop_log(f"Loading native app URL {url}")
+                window.load_url(url)
+                return
+
+            message = "The local app server stopped responding before the window could load."
+            detail = f"URL: {url}\nLog: {LOG_FILE}"
+            desktop_log(f"{message} {detail}")
+            window.load_html(shell_html("Local app did not start", message, detail))
+
+        icon_path = app_icon_path()
+        webview.start(
+            load_local_app,
+            debug=os.getenv("WEBVIEW_DEBUG", "") == "1",
+            icon=str(icon_path) if icon_path else None,
+        )
         desktop_log("Native app window closed")
         return 0
     except Exception as error:

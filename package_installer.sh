@@ -29,8 +29,9 @@ chmod +x "$PKG_APP/Contents/MacOS/LocalMeetingNoteTaker"
 find "$PKG_APP/Contents/Resources/local-meeting-note-taker" \
   -type f \( -name "*.sh" -o -name "*.command" \) \
   -exec chmod +x {} \;
+/usr/bin/dot_clean -m "$PKG_ROOT" 2>/dev/null || true
 find "$PKG_ROOT" -name "._*" -delete
-xattr -cr "$PKG_APP" 2>/dev/null || true
+xattr -cr "$PKG_ROOT" 2>/dev/null || true
 
 pkgbuild \
   --root "$PKG_ROOT" \
