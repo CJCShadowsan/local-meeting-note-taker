@@ -4,7 +4,7 @@ import Foundation
 import WebKit
 
 private let appName = "Local Meeting Note Taker"
-private let appVersion = "0.1.12"
+private let appVersion = "0.1.13"
 private let appPathPrefix = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
@@ -343,28 +343,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             return savedPort
         }
 
-        let port = chooseServerPort()
-        try startServer(from: root, port: port)
+        var lastExitCode: Int32 = 1
+        for port in 5055...5155 {
+            if serverResponds(port: port) {
+                continue
+            }
 
-        for _ in 0..<80 {
-            if serverMatchesApp(port: port, root: root) {
-                return port
+            try startServer(from: root, port: port)
+
+            for _ in 0..<80 {
+                if serverMatchesApp(port: port, root: root) {
+                    return port
+                }
+                if let process = serverProcess, !process.isRunning {
+                    lastExitCode = process.terminationStatus
+                    cleanupServerHandles()
+                    break
+                }
+                Thread.sleep(forTimeInterval: 0.25)
             }
-            if let process = serverProcess, !process.isRunning {
-                throw NSError(
-                    domain: appName,
-                    code: Int(process.terminationStatus),
-                    userInfo: [NSLocalizedDescriptionKey: "The local server exited during startup. Check data/logs/webapp.log."]
-                )
+
+            if let process = serverProcess, process.isRunning {
+                process.terminate()
+                cleanupServerHandles()
             }
-            Thread.sleep(forTimeInterval: 0.25)
         }
 
         throw NSError(
             domain: appName,
-            code: 1,
-            userInfo: [NSLocalizedDescriptionKey: "The local server did not become ready. Check data/logs/webapp.log."]
+            code: Int(lastExitCode),
+            userInfo: [NSLocalizedDescriptionKey: "The local server exited during startup on every available port. Check data/logs/webapp.log."]
         )
+    }
+
+    private func cleanupServerHandles() {
+        serverProcess = nil
+        try? serverLogHandle?.close()
+        serverLogHandle = nil
     }
 
     private func startServer(from root: URL, port: Int) throws {
@@ -405,6 +420,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
                 "APP_HOST": "127.0.0.1",
                 "APP_PORT": String(port),
                 "PYTHONUNBUFFERED": "1",
+                "PYTHONDONTWRITEBYTECODE": "1",
             ]
         )
         process.standardOutput = logHandle
@@ -470,15 +486,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             return nil
         }
         return port
-    }
-
-    private func chooseServerPort() -> Int {
-        for port in 5055...5155 {
-            if !serverResponds(port: port) {
-                return port
-            }
-        }
-        return 5055
     }
 
     private func serverResponds(port: Int) -> Bool {

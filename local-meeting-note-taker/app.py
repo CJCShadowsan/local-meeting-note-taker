@@ -27,7 +27,7 @@ NOTES_DIR = DATA_DIR / "notes"
 NATIVE_RECORDINGS_DIR = DATA_DIR / "native-recordings"
 LOG_DIR = DATA_DIR / "logs"
 NATIVE_RECORDING_LOG_FILE = LOG_DIR / "native-recording.log"
-APP_VERSION = "0.1.12"
+APP_VERSION = "0.1.13"
 
 
 def app_path_env() -> str:
