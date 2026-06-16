@@ -10,6 +10,23 @@ if [ "${1:-}" = "--launch-after" ]; then
   LAUNCH_AFTER=1
 fi
 
+ensure_app_root_writable() {
+  local test_file=".lmnt-write-test"
+  if ! ( : > "$test_file" ) 2>/dev/null; then
+    cat >&2 <<TEXT
+Local Meeting Note Taker cannot write to its application resource directory:
+$(pwd)
+
+First-run setup needs write access here so it can create the local Python environment,
+logs, notes, and runtime files. Reinstall with LocalMeetingNoteTaker-installer.pkg,
+or make this directory writable by the user launching the app.
+TEXT
+    exit 1
+  fi
+  rm -f "$test_file"
+}
+
+ensure_app_root_writable
 mkdir -p data/logs data/uploads data/results data/notes data/native-recordings
 PROGRESS_STEP=0
 PROGRESS_TOTAL=7

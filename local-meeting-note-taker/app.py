@@ -24,7 +24,7 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 RESULTS_DIR = DATA_DIR / "results"
 NOTES_DIR = DATA_DIR / "notes"
 NATIVE_RECORDINGS_DIR = DATA_DIR / "native-recordings"
-APP_VERSION = "0.1.7"
+APP_VERSION = "0.1.8"
 
 
 def app_path_env() -> str:

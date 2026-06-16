@@ -26,7 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         appRoot = root
-        setupLogFile = root.appendingPathComponent("data/logs/setup-window.log")
+        setupLogFile = setupLogURL(for: root)
 
         if requirementsAreReady(in: root) {
             launchDesktopApp(from: root)
@@ -56,6 +56,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         return nil
+    }
+
+    private func setupLogURL(for root: URL) -> URL {
+        let bundledLog = root.appendingPathComponent("data/logs/setup-window.log")
+        if prepareLogFile(bundledLog) {
+            return bundledLog
+        }
+
+        let fallbackLog = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/Local Meeting Note Taker/setup-window.log")
+        _ = prepareLogFile(fallbackLog)
+        return fallbackLog
+    }
+
+    private func prepareLogFile(_ url: URL) -> Bool {
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            if !FileManager.default.fileExists(atPath: url.path) {
+                _ = FileManager.default.createFile(atPath: url.path, contents: nil)
+            }
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.close()
+            return true
+        } catch {
+            return false
+        }
     }
 
     private func requirementsAreReady(in root: URL) -> Bool {
@@ -220,7 +249,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         process.terminationHandler = { [weak self] finishedProcess in
             outputPipe.fileHandleForReading.readabilityHandler = nil
+            let remainingData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            let remainingText = String(data: remainingData, encoding: .utf8) ?? ""
             DispatchQueue.main.async {
+                if !remainingText.isEmpty {
+                    self?.appendOutput(remainingText)
+                }
                 if finishedProcess.terminationStatus == 0 {
                     self?.setupSucceeded()
                 } else {

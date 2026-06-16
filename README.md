@@ -20,7 +20,7 @@ It records disclosed meetings from a selected macOS audio input, transcribes loc
 
 ## Quick Start
 
-From the GitHub release page, download **`LocalMeetingNoteTaker-installer.pkg`** for the easiest install. Double-click the package and follow macOS Installer; it installs **Local Meeting Note Taker.app** into `/Applications`, sets the app/helper script executable permissions, and removes quarantine from the installed app path.
+From the GitHub release page, download **`LocalMeetingNoteTaker-installer.pkg`** for the easiest install. Double-click the package and follow macOS Installer; it installs **Local Meeting Note Taker.app** into `/Applications`, makes the bundled runtime resource directory writable by the installing console user, sets the app/helper script executable permissions, and removes quarantine from the installed app path.
 
 The release also includes **`LocalMeetingNoteTaker-redistributable.zip`** for manual installs. A zip cannot auto-install when double-clicked on macOS; Archive Utility only extracts it. If using the zip, unzip it, then drag:
 
@@ -81,7 +81,7 @@ From the repo root:
 ./package_installer.sh
 ```
 
-The generated zip contains a single self-contained `Local Meeting Note Taker.app`. The generated pkg installs that app into `/Applications` and runs a postinstall permission/quarantine cleanup for the installed app. Both artifacts exclude local `.venv`, logs, notes, uploads, recordings, and machine-specific PID/port files.
+The generated zip contains a single self-contained `Local Meeting Note Taker.app`. The generated pkg installs that app into `/Applications` and runs a postinstall permission/quarantine cleanup for the installed app, including making `Contents/Resources/local-meeting-note-taker` writable for first-run local dependency setup. Both artifacts exclude local `.venv`, logs, notes, uploads, recordings, and machine-specific PID/port files.
 
 ## Release Automation
 

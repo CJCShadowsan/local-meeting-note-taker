@@ -3,6 +3,7 @@ set -euo pipefail
 
 APP="/Applications/Local Meeting Note Taker.app"
 APP_RESOURCES="$APP/Contents/Resources/local-meeting-note-taker"
+CONSOLE_USER="$(/usr/bin/stat -f "%Su" /dev/console 2>/dev/null || true)"
 
 if [ -d "$APP" ]; then
   /usr/sbin/chown -R root:admin "$APP" 2>/dev/null || true
@@ -10,6 +11,14 @@ if [ -d "$APP" ]; then
   /bin/chmod +x "$APP/Contents/MacOS/LocalMeetingNoteTaker" 2>/dev/null || true
 
   if [ -d "$APP_RESOURCES" ]; then
+    /bin/mkdir -p "$APP_RESOURCES/data/logs" 2>/dev/null || true
+    /usr/bin/touch "$APP_RESOURCES/data/logs/setup-window.log" 2>/dev/null || true
+
+    if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
+      CONSOLE_GROUP="$(/usr/bin/id -gn "$CONSOLE_USER" 2>/dev/null || echo staff)"
+      /usr/sbin/chown -R "$CONSOLE_USER:$CONSOLE_GROUP" "$APP_RESOURCES" 2>/dev/null || true
+    fi
+    /bin/chmod -R u+rwX,go+rX "$APP_RESOURCES" 2>/dev/null || true
     /usr/bin/find "$APP_RESOURCES" \
       -type f \( -name "*.sh" -o -name "*.command" \) \
       -exec /bin/chmod +x {} \; 2>/dev/null || true
