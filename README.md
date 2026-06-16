@@ -117,3 +117,5 @@ The release workflow builds `LocalMeetingNoteTaker-redistributable.zip` and atta
 ## Notes
 
 This app is not currently Apple-signed or notarized. On a new Mac, users may need to right-click the app and choose **Open** the first time.
+
+If the app window still says **Recent notes** instead of **History**, it is showing an older local server process. Current releases verify the running server belongs to the same app bundle before reusing it; older releases may need to be quit or replaced.

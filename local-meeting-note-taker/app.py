@@ -24,6 +24,7 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 RESULTS_DIR = DATA_DIR / "results"
 NOTES_DIR = DATA_DIR / "notes"
 NATIVE_RECORDINGS_DIR = DATA_DIR / "native-recordings"
+APP_VERSION = "0.1.4"
 
 for folder in (UPLOAD_DIR, RESULTS_DIR, NOTES_DIR, NATIVE_RECORDINGS_DIR):
     folder.mkdir(parents=True, exist_ok=True)
@@ -676,6 +677,17 @@ def import_status(module_name: str) -> dict[str, Any]:
 @app.get("/")
 def index() -> str:
     return render_template("index.html", defaults=DEFAULTS)
+
+
+@app.get("/identity")
+def identity() -> Any:
+    return jsonify(
+        {
+            "app": "local-meeting-note-taker",
+            "app_version": APP_VERSION,
+            "app_root": str(BASE_DIR),
+        }
+    )
 
 
 @app.get("/health")

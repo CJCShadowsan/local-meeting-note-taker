@@ -25,6 +25,7 @@ DESKTOP_LOG_FILE = LOG_DIR / "desktop.log"
 NATIVE_RECORDING_LOG_FILE = LOG_DIR / "native-recording.log"
 NATIVE_RECORDINGS_DIR = DATA_DIR / "native-recordings"
 DEFAULT_PORT = int(os.getenv("APP_PORT", "5055"))
+APP_VERSION = "0.1.4"
 
 
 def pid_is_running(pid: int) -> bool:
@@ -59,6 +60,27 @@ def http_ready(port: int) -> bool:
             return 200 <= response.status < 500
     except (urllib.error.URLError, TimeoutError, OSError):
         return False
+
+
+def server_identity(port: int) -> dict[str, Any] | None:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/identity", timeout=1.5) as response:
+            if not (200 <= response.status < 300):
+                return None
+            data = json.loads(response.read().decode("utf-8"))
+    except (json.JSONDecodeError, urllib.error.URLError, TimeoutError, OSError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def server_matches_this_app(port: int) -> bool:
+    identity = server_identity(port)
+    return bool(
+        identity
+        and identity.get("app") == "local-meeting-note-taker"
+        and identity.get("app_version") == APP_VERSION
+        and identity.get("app_root") == str(APP_ROOT)
+    )
 
 
 def print_url(port: int) -> None:
@@ -242,9 +264,14 @@ def start_server() -> tuple[int, int | None, bool]:
     saved_pid = read_int(PID_FILE)
     saved_port = read_int(PORT_FILE) or DEFAULT_PORT
     if saved_pid and pid_is_running(saved_pid):
-        return saved_port, saved_pid, False
+        if server_matches_this_app(saved_port):
+            return saved_port, saved_pid, False
+        append_log(
+            LOG_FILE,
+            f"Ignoring saved server pid={saved_pid} port={saved_port}; it does not match this app bundle.",
+        )
 
-    if http_ready(DEFAULT_PORT):
+    if server_matches_this_app(DEFAULT_PORT):
         PORT_FILE.write_text(str(DEFAULT_PORT), encoding="utf-8")
         return DEFAULT_PORT, None, False
 
