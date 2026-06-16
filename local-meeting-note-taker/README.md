@@ -61,7 +61,7 @@ Double-click either:
 - `Local Meeting Note Taker.app`
 - `Start Local Meeting Note Taker.command`
 
-The launcher checks whether requirements are ready. A package install should already have completed setup, so launching from `/Applications` starts or reuses the local app server and opens a **Local Meeting Note Taker** desktop window. If a manual zip install or damaged install is missing requirements, the app can still open a repair setup window. The app requests macOS microphone permission at startup and uses the native recording bridge for live capture. It should not open Safari, Chrome, Terminal, or another external browser for the normal app path.
+The launcher checks whether requirements are ready. A package install should already have completed setup, so launching from `/Applications` starts or reuses the local app server and opens a **Local Meeting Note Taker** desktop window. If a manual zip install or damaged install is missing requirements, the app can still open a repair setup window. The app uses the native Swift recording bridge for live capture, and macOS may ask for Microphone and Screen Recording access the first time recording starts. It should not open Safari, Chrome, Terminal, or another external browser for the normal app path.
 
 To stop the saved webapp process, double-click:
 
@@ -99,33 +99,12 @@ The source audio is deleted after processing by default. Uncheck **Delete source
 
 ## Recording Meeting Audio On Mac
 
-When launched as `Local Meeting Note Taker.app`, the app records through a native macOS bridge, not browser `MediaRecorder`. This avoids the embedded-WebKit limitation where the app window may report that browser recording is unsupported.
+When launched as `Local Meeting Note Taker.app`, the app records through a native macOS bridge, not browser `MediaRecorder`. It captures your default microphone and application audio together, so in-person meetings, Teams, Google Meet, Zoom, browsers, and other apps can be transcribed from one recording.
 
-The **Mac input device** field defaults to `:0`, which means ffmpeg's first AVFoundation audio input. If the wrong input is captured, list audio devices from Terminal:
+The first recording may trigger macOS privacy prompts for:
 
-```bash
-ffmpeg -f avfoundation -list_devices true -i ""
-```
-
-Then set **Mac input device** to the desired audio index, such as `:1` or `:2`.
-
-For an in-person meeting, use your Mac microphone input. For Teams, Google Meet, Zoom, or system audio, route meeting audio into a virtual input such as BlackHole, Loopback, or an Aggregate Device, then set **Mac input device** to that audio input's AVFoundation index.
-
-### BlackHole Setup
-
-BlackHole is the free route. Loopback or Audio Hijack are easier if you want a polished paid tool.
-
-1. Install BlackHole:
-
-```bash
-brew install --cask blackhole-2ch
-```
-
-2. Open **Audio MIDI Setup** on macOS.
-3. Create a **Multi-Output Device** containing your normal speakers/headphones and BlackHole.
-4. Set Teams/Meet/Zoom output, or macOS system output, to that Multi-Output Device.
-5. In the app, set **Mac input device** to the BlackHole audio device index, then click **Start recording**.
-6. If you also need your own microphone captured, create an **Aggregate Device** or use Loopback to mix your mic plus meeting audio into one virtual input.
+- **Microphone** access for your local voice.
+- **Screen Recording** access for application audio.
 
 Uploading an existing native Teams/Meet/Zoom recording is still the most reliable workflow, and those platforms provide their own participant recording notices.
 
@@ -133,9 +112,8 @@ Uploading an existing native Teams/Meet/Zoom recording is still the most reliabl
 
 If recording captures the wrong input:
 
-- Run the `ffmpeg -f avfoundation -list_devices true -i ""` command above and try the correct `:N` audio index.
-- macOS: check **System Settings > Privacy & Security > Microphone** for Local Meeting Note Taker, Terminal, Python, or ffmpeg permission prompts.
-- Teams/Meet/Zoom: confirm the meeting audio is actually routed to the virtual device.
+- macOS: check **System Settings > Privacy & Security > Microphone** and **Screen Recording** for Local Meeting Note Taker.
+- Teams/Meet/Zoom: confirm the meeting audio is playing through your Mac during capture.
 
 ## Model Settings
 

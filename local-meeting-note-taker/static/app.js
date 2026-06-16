@@ -50,6 +50,7 @@ const state = {
   isBusy: false,
   pendingDelete: null,
   nativeRecording: false,
+  nativeStarting: false,
   nativeApiReady: false,
   nativeBridgeExpected,
 };
@@ -70,7 +71,7 @@ function updateCaptureControls() {
   const recorderReady = !state.nativeBridgeExpected || state.nativeApiReady;
   elements.uploadButton.disabled = state.isBusy || !state.selectedFile || !ready;
   elements.recordButton.disabled =
-    state.isBusy || Boolean(state.recorder) || state.nativeRecording || !ready || !recorderReady;
+    state.isBusy || Boolean(state.recorder) || state.nativeRecording || state.nativeStarting || !ready || !recorderReady;
 }
 
 function setBusy(isBusy) {
@@ -123,12 +124,17 @@ function buildSettingsPayload() {
 
 function nativeApiAvailable() {
   return (
+    Boolean(window.localMeetingRecorder?.start && window.localMeetingRecorder?.stop) ||
     state.nativeBridgeExpected ||
     Boolean(window.pywebview?.api?.start_recording && window.pywebview?.api?.stop_recording)
   );
 }
 
 async function callNativeRecorder(action, settings) {
+  if (window.localMeetingRecorder?.[action]) {
+    return window.localMeetingRecorder[action](settings);
+  }
+
   const pywebviewApi = window.pywebview?.api;
   if (pywebviewApi?.[`${action}_recording`]) {
     return pywebviewApi[`${action}_recording`](settings);
@@ -425,17 +431,23 @@ function stopTimer() {
 }
 
 async function startNativeRecording() {
+  state.nativeStarting = true;
+  elements.recordingState.textContent = "Starting recorder";
+  updateCaptureControls();
+
   try {
     const result = await callNativeRecorder("start", buildSettingsPayload());
     if (!result.ok) throw new Error(result.error || "Native recording could not start.");
 
+    state.nativeStarting = false;
     state.nativeRecording = true;
     beginTimer();
-    elements.recordingState.textContent = "Recording from Mac input";
+    elements.recordingState.textContent = "Recording mic + app audio";
     elements.stopButton.disabled = false;
     updateCaptureControls();
-    setStatus("Recording from the selected macOS input device", 0);
+    setStatus("Recording microphone and application audio", 0);
   } catch (error) {
+    state.nativeStarting = false;
     state.nativeRecording = false;
     stopTimer();
     elements.stopButton.disabled = true;
@@ -596,17 +608,26 @@ elements.dropZone.addEventListener("keydown", (event) => {
 loadHealth();
 loadNotes();
 if (state.nativeBridgeExpected) {
-  state.nativeApiReady = true;
-  elements.recordingState.textContent = "Starting Mac input";
-  setStatus("Native app recording is ready. Select your macOS input device before recording.", 0);
+  state.nativeApiReady = nativeApiAvailable();
+  elements.recordingState.textContent = "Mic + app audio ready";
+  setStatus("Native app recording is ready.", 0);
 }
 updateCaptureControls();
+
+window.addEventListener("localMeetingRecorderReady", () => {
+  state.nativeApiReady = nativeApiAvailable();
+  if (state.nativeApiReady) {
+    elements.recordingState.textContent = "Mic + app audio ready";
+    setStatus("Native app recording is ready.", 0);
+  }
+  updateCaptureControls();
+});
 
 window.addEventListener("pywebviewready", () => {
   state.nativeApiReady = nativeApiAvailable();
   if (state.nativeApiReady) {
-    elements.recordingState.textContent = "Mac input ready";
-    setStatus("Native app recording is ready. Select your macOS input device before recording.", 0);
+    elements.recordingState.textContent = "Mic + app audio ready";
+    setStatus("Native app recording is ready.", 0);
   }
   updateCaptureControls();
 });

@@ -2,7 +2,7 @@
 
 A local-first macOS meeting note taker packaged as a native desktop app around an embedded web UI.
 
-It records disclosed meetings from a selected macOS audio input, transcribes locally with Whisper, summarizes locally with Ollama, and saves Markdown/JSON notes on disk.
+It records disclosed meetings from your microphone and application audio, transcribes locally with Whisper, summarizes locally with Ollama, and saves Markdown/JSON notes on disk.
 
 ## Features
 
@@ -12,7 +12,7 @@ It records disclosed meetings from a selected macOS audio input, transcribes loc
 - Installer-time setup for required local dependencies
 - Local Whisper transcription
 - Local Ollama meeting summaries
-- Native macOS audio recording via `ffmpeg`/AVFoundation
+- Native macOS recording that combines microphone and application audio
 - Upload existing audio/video recordings
 - Participant-disclosure gate before capture
 - Source-audio deletion enabled by default
@@ -41,7 +41,7 @@ During package installation, setup can take several minutes on a fresh Mac becau
 - an Ollama summary model
 - the default Whisper speech model
 
-Installer setup details are written to `Contents/Resources/local-meeting-note-taker/data/logs/pkg-install.log` inside the installed app. After installation, the app opens its own **Local Meeting Note Taker** window and identifies itself that way in the macOS app menu. The app requests macOS microphone permission at startup, then uses the native recording bridge instead of WebKit browser microphone capture. It should not require Safari, Chrome, Terminal, or another browser.
+Installer setup details are written to `Contents/Resources/local-meeting-note-taker/data/logs/pkg-install.log` inside the installed app. After installation, the app opens its own **Local Meeting Note Taker** window and identifies itself that way in the macOS app menu. The app uses a native Swift recording bridge instead of WebKit browser microphone capture; macOS may ask for Microphone and Screen Recording access the first time recording starts. It should not require Safari, Chrome, Terminal, or another browser.
 
 ## Manual Install
 
@@ -53,15 +53,12 @@ cd local-meeting-note-taker
 
 ## Recording Teams, Meet, Zoom, Or System Audio
 
-For live meeting audio, route the meeting output into a macOS input device using BlackHole, Loopback, Audio Hijack, or an Aggregate Device.
+The packaged macOS app records your default microphone and application audio together using native macOS capture APIs. The first recording may trigger two macOS privacy prompts:
 
-The app's **Mac input device** field defaults to `:0`, meaning ffmpeg's first AVFoundation audio input. To list audio devices:
+- **Microphone** for your local voice.
+- **Screen Recording** for application audio from Teams, Google Meet, Zoom, browsers, and other apps.
 
-```bash
-ffmpeg -f avfoundation -list_devices true -i ""
-```
-
-Then set **Mac input device** to the desired audio index, such as `:1` or `:2`.
+After both permissions are granted, future recordings should start without repeated prompts. Uploading an existing Teams/Meet/Zoom recording also remains supported.
 
 ## Privacy And Disclosure
 
@@ -91,9 +88,9 @@ GitHub Actions builds the redistributable pkg and zip only when a GitHub Release
 To publish a release:
 
 ```bash
-git tag v0.1.13
-git push origin v0.1.13
-gh release create v0.1.13 --title "Local Meeting Note Taker v0.1.13" --notes "Release notes"
+git tag v0.1.14
+git push origin v0.1.14
+gh release create v0.1.14 --title "Local Meeting Note Taker v0.1.14" --notes "Release notes"
 ```
 
 The release workflow builds `LocalMeetingNoteTaker-installer.pkg` and `LocalMeetingNoteTaker-redistributable.zip`, then attaches both to that release.
