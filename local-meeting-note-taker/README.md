@@ -6,7 +6,7 @@ https://medium.com/data-science-collective/i-built-an-self-hosted-ai-meeting-not
 It uses the same core pattern from the article:
 
 - Flask for the local app server
-- pywebview for the native macOS app window
+- Swift `WKWebView` for the native macOS app window
 - Pydub and `ffmpeg` to split audio into chunks
 - Whisper running locally for transcription
 - Ollama running locally for meeting-minute summaries
@@ -79,7 +79,7 @@ Or use the terminal commands:
 
 Runtime logs are written to `data/logs/webapp.log`. Package install logs are written to `data/logs/pkg-install.log`, and repair setup-window logs are written to `data/logs/setup-window.log`. The saved process id and selected port are kept in `data/app.pid` and `data/app.port`.
 
-Browser fallback, only if the native app window has trouble:
+Browser fallback for source/manual runs:
 
 ```bash
 .venv/bin/python launcher.py --browser

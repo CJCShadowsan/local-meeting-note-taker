@@ -91,9 +91,9 @@ GitHub Actions builds the redistributable pkg and zip only when a GitHub Release
 To publish a release:
 
 ```bash
-git tag v0.1.11
-git push origin v0.1.11
-gh release create v0.1.11 --title "Local Meeting Note Taker v0.1.11" --notes "Release notes"
+git tag v0.1.12
+git push origin v0.1.12
+gh release create v0.1.12 --title "Local Meeting Note Taker v0.1.12" --notes "Release notes"
 ```
 
 The release workflow builds `LocalMeetingNoteTaker-installer.pkg` and `LocalMeetingNoteTaker-redistributable.zip`, then attaches both to that release.

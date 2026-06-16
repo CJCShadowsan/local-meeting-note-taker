@@ -122,7 +122,30 @@ function buildSettingsPayload() {
 }
 
 function nativeApiAvailable() {
-  return Boolean(window.pywebview?.api?.start_recording && window.pywebview?.api?.stop_recording);
+  return (
+    state.nativeBridgeExpected ||
+    Boolean(window.pywebview?.api?.start_recording && window.pywebview?.api?.stop_recording)
+  );
+}
+
+async function callNativeRecorder(action, settings) {
+  const pywebviewApi = window.pywebview?.api;
+  if (pywebviewApi?.[`${action}_recording`]) {
+    return pywebviewApi[`${action}_recording`](settings);
+  }
+
+  const response = await fetch(`/native/${action}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(settings),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || `Native recording ${action} failed.`);
+  }
+  return data;
 }
 
 async function uploadFile(file) {
@@ -403,7 +426,7 @@ function stopTimer() {
 
 async function startNativeRecording() {
   try {
-    const result = await window.pywebview.api.start_recording(buildSettingsPayload());
+    const result = await callNativeRecorder("start", buildSettingsPayload());
     if (!result.ok) throw new Error(result.error || "Native recording could not start.");
 
     state.nativeRecording = true;
@@ -432,7 +455,7 @@ async function stopNativeRecording() {
   setStatus("Saving native recording", 4);
 
   try {
-    const result = await window.pywebview.api.stop_recording(buildSettingsPayload());
+    const result = await callNativeRecorder("stop", buildSettingsPayload());
     if (!result.ok) throw new Error(result.error || "Native recording upload failed.");
     state.activeJobId = result.job_id;
     elements.jobId.textContent = result.job_id.slice(0, 8);
@@ -573,8 +596,9 @@ elements.dropZone.addEventListener("keydown", (event) => {
 loadHealth();
 loadNotes();
 if (state.nativeBridgeExpected) {
+  state.nativeApiReady = true;
   elements.recordingState.textContent = "Starting Mac input";
-  setStatus("Preparing native app recording.", 0);
+  setStatus("Native app recording is ready. Select your macOS input device before recording.", 0);
 }
 updateCaptureControls();
 

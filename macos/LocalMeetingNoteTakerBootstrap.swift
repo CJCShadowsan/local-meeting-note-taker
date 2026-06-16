@@ -1,11 +1,13 @@
 import AppKit
 import AVFoundation
 import Foundation
+import WebKit
 
 private let appName = "Local Meeting Note Taker"
+private let appVersion = "0.1.12"
 private let appPathPrefix = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private var window: NSWindow?
     private var statusLabel: NSTextField?
     private var detailLabel: NSTextField?
@@ -15,6 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var setupProcess: Process?
     private var appRoot: URL?
     private var setupLogFile: URL?
+    private var serverProcess: Process?
+    private var serverLogHandle: FileHandle?
+    private var webView: WKWebView?
     private var outputBuffer = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -36,8 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func continueStartup(with root: URL) {
         if requirementsAreReady(in: root) {
-            launchDesktopApp(from: root)
-            NSApp.terminate(nil)
+            startAppWindow(from: root)
             return
         }
 
@@ -47,6 +51,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return setupProcess == nil
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let process = serverProcess, process.isRunning {
+            process.terminate()
+        }
+        try? serverLogHandle?.close()
     }
 
     private func findAppRoot() -> URL? {
@@ -304,11 +315,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         closeButton?.title = "Close"
 
         if let root = appRoot {
-            launchDesktopApp(from: root)
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-            NSApp.terminate(nil)
+            startAppWindow(from: root)
         }
     }
 
@@ -322,29 +329,227 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appendOutput("\n\(message)\n")
     }
 
-    private func launchDesktopApp(from root: URL) {
+    private func startAppWindow(from root: URL) {
+        do {
+            let port = try ensureServerRunning(from: root)
+            buildAppWindow(port: port, root: root)
+        } catch {
+            showFatalError("Could not start the local app server: \(error.localizedDescription)")
+        }
+    }
+
+    private func ensureServerRunning(from root: URL) throws -> Int {
+        if let savedPort = readSavedPort(from: root), serverMatchesApp(port: savedPort, root: root) {
+            return savedPort
+        }
+
+        let port = chooseServerPort()
+        try startServer(from: root, port: port)
+
+        for _ in 0..<80 {
+            if serverMatchesApp(port: port, root: root) {
+                return port
+            }
+            if let process = serverProcess, !process.isRunning {
+                throw NSError(
+                    domain: appName,
+                    code: Int(process.terminationStatus),
+                    userInfo: [NSLocalizedDescriptionKey: "The local server exited during startup. Check data/logs/webapp.log."]
+                )
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+
+        throw NSError(
+            domain: appName,
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "The local server did not become ready. Check data/logs/webapp.log."]
+        )
+    }
+
+    private func startServer(from root: URL, port: Int) throws {
         let python = root.appendingPathComponent(".venv/bin/python")
-        let launcher = root.appendingPathComponent("launcher.py")
+        let app = root.appendingPathComponent("app.py")
+        guard FileManager.default.isExecutableFile(atPath: python.path) else {
+            throw NSError(
+                domain: appName,
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Bundled Python was not found at \(python.path)."]
+            )
+        }
+        guard FileManager.default.fileExists(atPath: app.path) else {
+            throw NSError(
+                domain: appName,
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "The local app server was not found at \(app.path)."]
+            )
+        }
+
+        let logFile = root.appendingPathComponent("data/logs/webapp.log")
+        try FileManager.default.createDirectory(at: logFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if !FileManager.default.fileExists(atPath: logFile.path) {
+            FileManager.default.createFile(atPath: logFile.path, contents: nil)
+        }
+        let logHandle = try FileHandle(forWritingTo: logFile)
+        try logHandle.seekToEnd()
+        if let header = "\n\n--- Launch \(Date()) ---\n".data(using: .utf8) {
+            try? logHandle.write(contentsOf: header)
+        }
 
         let process = Process()
         process.executableURL = python
-        process.arguments = [launcher.path]
+        process.arguments = [app.path]
         process.currentDirectoryURL = root
-        process.environment = appEnvironment()
+        process.environment = appEnvironment(
+            extra: [
+                "APP_HOST": "127.0.0.1",
+                "APP_PORT": String(port),
+                "PYTHONUNBUFFERED": "1",
+            ]
+        )
+        process.standardOutput = logHandle
+        process.standardError = logHandle
 
-        let logFile = root.appendingPathComponent("data/logs/desktop-launcher.log")
-        FileManager.default.createFile(atPath: logFile.path, contents: nil)
-        if let logHandle = try? FileHandle(forWritingTo: logFile) {
-            _ = try? logHandle.seekToEnd()
-            process.standardOutput = logHandle
-            process.standardError = logHandle
+        process.terminationHandler = { [weak self] finishedProcess in
+            self?.appendToSetupLog("Local server exited with code \(finishedProcess.terminationStatus)\n")
         }
 
-        do {
-            try process.run()
-        } catch {
-            showFatalError("Could not launch the app: \(error.localizedDescription)")
+        try process.run()
+        serverProcess = process
+        serverLogHandle = logHandle
+
+        try? String(process.processIdentifier).write(
+            to: root.appendingPathComponent("data/app.pid"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try? String(port).write(
+            to: root.appendingPathComponent("data/app.port"),
+            atomically: true,
+            encoding: .utf8
+        )
+    }
+
+    private func buildAppWindow(port: Int, root: URL) {
+        let appWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1260, height: 900),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        appWindow.title = appName
+        appWindow.center()
+
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        let webView = WKWebView(frame: appWindow.contentView?.bounds ?? .zero, configuration: configuration)
+        webView.navigationDelegate = self
+        webView.autoresizingMask = [.width, .height]
+        appWindow.contentView = webView
+
+        let oldWindow = self.window
+        self.window = appWindow
+        self.webView = webView
+
+        appWindow.makeKeyAndOrderFront(nil)
+        oldWindow?.close()
+        NSApp.activate(ignoringOtherApps: true)
+
+        if let url = URL(string: "http://127.0.0.1:\(port)/?native=1") {
+            appendToSetupLog("Loading app UI at \(url.absoluteString)\n")
+            webView.load(URLRequest(url: url))
         }
+    }
+
+    private func readSavedPort(from root: URL) -> Int? {
+        let portFile = root.appendingPathComponent("data/app.port")
+        guard
+            let text = try? String(contentsOf: portFile, encoding: .utf8),
+            let port = Int(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        else {
+            return nil
+        }
+        return port
+    }
+
+    private func chooseServerPort() -> Int {
+        for port in 5055...5155 {
+            if !serverResponds(port: port) {
+                return port
+            }
+        }
+        return 5055
+    }
+
+    private func serverResponds(port: Int) -> Bool {
+        let url = URL(string: "http://127.0.0.1:\(port)/identity")!
+        return fetchJSON(url: url) != nil
+    }
+
+    private func serverMatchesApp(port: Int, root: URL) -> Bool {
+        let url = URL(string: "http://127.0.0.1:\(port)/identity")!
+        guard let json = fetchJSON(url: url) else {
+            return false
+        }
+        return json["app"] as? String == "local-meeting-note-taker"
+            && json["app_version"] as? String == appVersion
+            && json["app_root"] as? String == root.path
+    }
+
+    private func fetchJSON(url: URL) -> [String: Any]? {
+        let semaphore = DispatchSemaphore(value: 0)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 0.8
+        configuration.timeoutIntervalForResource = 0.8
+        let session = URLSession(configuration: configuration)
+        var result: [String: Any]?
+
+        let task = session.dataTask(with: url) { data, response, _ in
+            defer {
+                semaphore.signal()
+            }
+            guard
+                let http = response as? HTTPURLResponse,
+                (200..<300).contains(http.statusCode),
+                let data,
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else {
+                return
+            }
+            result = json
+        }
+        task.resume()
+        _ = semaphore.wait(timeout: .now() + 1.0)
+        session.invalidateAndCancel()
+        return result
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        showWebError(error.localizedDescription)
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        showWebError(error.localizedDescription)
+    }
+
+    private func showWebError(_ message: String) {
+        let escapedMessage = message
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+        let html = """
+        <!doctype html>
+        <html>
+          <body style="margin:0;display:grid;place-items:center;min-height:100vh;background:#f5f6f8;color:#17212b;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+            <main style="max-width:560px;border:1px solid #d9dee5;border-radius:8px;background:#fff;padding:28px;">
+              <h1 style="margin-top:0;font-size:22px;">Local app did not load</h1>
+              <p style="color:#65717f;line-height:1.5;">\(escapedMessage)</p>
+              <p style="color:#65717f;line-height:1.5;">Check data/logs/webapp.log inside the installed app for details.</p>
+            </main>
+          </body>
+        </html>
+        """
+        webView?.loadHTMLString(html, baseURL: nil)
     }
 
     private func appendOutput(_ text: String) {

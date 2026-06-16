@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import threading
 import time
@@ -24,7 +25,9 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 RESULTS_DIR = DATA_DIR / "results"
 NOTES_DIR = DATA_DIR / "notes"
 NATIVE_RECORDINGS_DIR = DATA_DIR / "native-recordings"
-APP_VERSION = "0.1.11"
+LOG_DIR = DATA_DIR / "logs"
+NATIVE_RECORDING_LOG_FILE = LOG_DIR / "native-recording.log"
+APP_VERSION = "0.1.12"
 
 
 def app_path_env() -> str:
@@ -40,7 +43,7 @@ def app_path_env() -> str:
 
 os.environ["PATH"] = app_path_env()
 
-for folder in (UPLOAD_DIR, RESULTS_DIR, NOTES_DIR, NATIVE_RECORDINGS_DIR):
+for folder in (UPLOAD_DIR, RESULTS_DIR, NOTES_DIR, NATIVE_RECORDINGS_DIR, LOG_DIR):
     folder.mkdir(parents=True, exist_ok=True)
 
 
@@ -65,6 +68,9 @@ JOBS: dict[str, dict[str, Any]] = {}
 JOBS_LOCK = threading.Lock()
 WHISPER_MODELS: dict[str, Any] = {}
 WHISPER_LOCK = threading.Lock()
+NATIVE_RECORDER_LOCK = threading.Lock()
+NATIVE_RECORDER_PROCESS: subprocess.Popen[bytes] | None = None
+NATIVE_RECORDER_PATH: Path | None = None
 
 
 def env_default(name: str, fallback: str) -> str:
@@ -154,37 +160,60 @@ def parse_int(value: str, fallback: int, minimum: int, maximum: int) -> int:
     return min(max(parsed, minimum), maximum)
 
 
-def parse_bool(value: str | None, default: bool = False) -> bool:
+def parse_bool(value: Any | None, default: bool = False) -> bool:
     if value is None:
         return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def form_settings() -> dict[str, Any]:
+def settings_from_values(values: Any) -> dict[str, Any]:
     chunk_default = parse_float(DEFAULTS["chunk_minutes"], 10, 1, 30)
     summary_default = parse_int(DEFAULTS["summary_chunk_chars"], 12000, 4000, 50000)
+
+    def value(name: str, fallback: str = "") -> str:
+        raw = values.get(name, fallback)
+        if raw is None:
+            raw = fallback
+        return str(raw).strip()
+
     return {
-        "whisper_model": request.form.get("whisper_model", DEFAULTS["whisper_model"]).strip()
-        or DEFAULTS["whisper_model"],
-        "language": request.form.get("language", DEFAULTS["language"]).strip(),
-        "ollama_base_url": request.form.get(
-            "ollama_base_url", DEFAULTS["ollama_base_url"]
-        ).strip()
-        or DEFAULTS["ollama_base_url"],
-        "ollama_model": request.form.get("ollama_model", DEFAULTS["ollama_model"]).strip()
-        or DEFAULTS["ollama_model"],
+        "whisper_model": value("whisper_model", DEFAULTS["whisper_model"]) or DEFAULTS["whisper_model"],
+        "language": value("language", DEFAULTS["language"]),
+        "ollama_base_url": value("ollama_base_url", DEFAULTS["ollama_base_url"]) or DEFAULTS["ollama_base_url"],
+        "ollama_model": value("ollama_model", DEFAULTS["ollama_model"]) or DEFAULTS["ollama_model"],
         "chunk_minutes": parse_float(
-            request.form.get("chunk_minutes", str(chunk_default)), chunk_default, 1, 30
+            value("chunk_minutes", str(chunk_default)), chunk_default, 1, 30
         ),
         "summary_chunk_chars": parse_int(
-            request.form.get("summary_chunk_chars", str(summary_default)),
+            value("summary_chunk_chars", str(summary_default)),
             summary_default,
             4000,
             50000,
         ),
-        "participants_notified": parse_bool(request.form.get("participants_notified")),
-        "delete_source_audio": parse_bool(request.form.get("delete_source_audio"), True),
+        "participants_notified": parse_bool(values.get("participants_notified")),
+        "delete_source_audio": parse_bool(values.get("delete_source_audio"), True),
     }
+
+
+def form_settings() -> dict[str, Any]:
+    return settings_from_values(request.form)
+
+
+def append_native_log(message: str) -> None:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    with NATIVE_RECORDING_LOG_FILE.open("a", encoding="utf-8") as log:
+        log.write(f"[{timestamp}] {message}\n")
+
+
+def tail_native_log() -> str:
+    try:
+        lines = NATIVE_RECORDING_LOG_FILE.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except Exception:
+        return ""
+    return " ".join(lines[-8:])
 
 
 def get_whisper_model(model_name: str) -> Any:
@@ -670,6 +699,36 @@ def process_audio_file(job_id: str, file_path: Path, original_filename: str, tit
             update_job(job_id, source_deleted=delete_source_audio(file_path))
 
 
+def queue_audio_job(
+    file_path: Path,
+    original_filename: str,
+    title: str,
+    settings: dict[str, Any],
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    job_id = job_id or str(uuid.uuid4())
+    with JOBS_LOCK:
+        JOBS[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "phase": "Queued",
+            "progress": 0,
+            "source_filename": original_filename,
+            "title": title,
+            "settings": settings,
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+        }
+
+    worker = threading.Thread(
+        target=process_audio_file,
+        args=(job_id, file_path, original_filename, title, settings),
+        daemon=True,
+    )
+    worker.start()
+    return {"job_id": job_id, "status": "queued"}
+
+
 def ollama_status(base_url: str) -> dict[str, Any]:
     try:
         response = requests.get(base_url.rstrip("/") + "/api/tags", timeout=2)
@@ -826,26 +885,107 @@ def upload_file() -> Any:
     file.save(file_path)
 
     title = request.form.get("title", "").strip()
-    with JOBS_LOCK:
-        JOBS[job_id] = {
-            "job_id": job_id,
-            "status": "queued",
-            "phase": "Queued",
-            "progress": 0,
-            "source_filename": original_filename,
-            "title": title,
-            "settings": settings,
-            "created_at": now_iso(),
-            "updated_at": now_iso(),
-        }
+    return jsonify(queue_audio_job(file_path, original_filename, title, settings, job_id=job_id))
 
-    worker = threading.Thread(
-        target=process_audio_file,
-        args=(job_id, file_path, original_filename, title, settings),
-        daemon=True,
-    )
-    worker.start()
-    return jsonify({"job_id": job_id, "status": "queued"})
+
+@app.post("/native/start")
+def start_native_recording() -> Any:
+    global NATIVE_RECORDER_PATH, NATIVE_RECORDER_PROCESS
+
+    payload = request.get_json(silent=True) or {}
+    settings = settings_from_values(payload)
+    if not settings["participants_notified"]:
+        return jsonify({"ok": False, "error": "Confirm participant notice before recording."}), 400
+
+    ffmpeg_path = shutil.which("ffmpeg")
+    if not ffmpeg_path:
+        return jsonify({"ok": False, "error": "ffmpeg was not found. Install it with: brew install ffmpeg"}), 500
+
+    with NATIVE_RECORDER_LOCK:
+        if NATIVE_RECORDER_PROCESS and NATIVE_RECORDER_PROCESS.poll() is None:
+            return jsonify({"ok": False, "error": "A native recording is already running."}), 409
+
+        NATIVE_RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        recording_path = NATIVE_RECORDINGS_DIR / f"native-recording-{timestamp}.wav"
+        device = str(payload.get("native_audio_device") or os.getenv("NATIVE_AUDIO_DEVICE", ":0"))
+        command = [
+            ffmpeg_path,
+            "-hide_banner",
+            "-y",
+            "-f",
+            "avfoundation",
+            "-i",
+            device,
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-acodec",
+            "pcm_s16le",
+            str(recording_path),
+        ]
+        append_native_log("Starting native recorder: " + " ".join(command))
+
+        try:
+            log = NATIVE_RECORDING_LOG_FILE.open("ab")
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                cwd=str(BASE_DIR),
+            )
+        except Exception as error:
+            append_native_log(f"Native recorder failed to start: {type(error).__name__}: {error}")
+            return jsonify({"ok": False, "error": f"Native recorder failed to start: {type(error).__name__}: {error}"}), 500
+
+        time.sleep(0.4)
+        if process.poll() is not None:
+            return jsonify({"ok": False, "error": "Native recorder exited immediately. " + tail_native_log()}), 500
+
+        NATIVE_RECORDER_PROCESS = process
+        NATIVE_RECORDER_PATH = recording_path
+        return jsonify({"ok": True, "path": str(recording_path)})
+
+
+@app.post("/native/stop")
+def stop_native_recording() -> Any:
+    global NATIVE_RECORDER_PATH, NATIVE_RECORDER_PROCESS
+
+    payload = request.get_json(silent=True) or {}
+    settings = settings_from_values(payload)
+
+    with NATIVE_RECORDER_LOCK:
+        process = NATIVE_RECORDER_PROCESS
+        recording_path = NATIVE_RECORDER_PATH
+        NATIVE_RECORDER_PROCESS = None
+        NATIVE_RECORDER_PATH = None
+
+    if not process or not recording_path:
+        return jsonify({"ok": False, "error": "No native recording is running."}), 400
+
+    append_native_log(f"Stopping native recorder pid={process.pid}")
+    try:
+        if process.stdin:
+            process.stdin.write(b"q\n")
+            process.stdin.flush()
+    except Exception:
+        process.terminate()
+
+    try:
+        process.wait(timeout=8)
+    except subprocess.TimeoutExpired:
+        process.terminate()
+        process.wait(timeout=3)
+
+    if not recording_path.exists() or recording_path.stat().st_size < 1024:
+        return jsonify({"ok": False, "error": "Native recording did not produce usable audio. " + tail_native_log()}), 500
+
+    title = str(payload.get("title") or "").strip()
+    queued = queue_audio_job(recording_path, recording_path.name, title, settings)
+    return jsonify({"ok": True, **queued})
 
 
 @app.get("/status/<job_id>")

@@ -170,7 +170,7 @@ ensure_python_environment() {
   python_bin="$(select_python)"
 
   if [ -x ".venv/bin/python" ] && ".venv/bin/python" - <<'PY' >/dev/null 2>&1
-import flask, requests, pydub, whisper, webview
+import flask, requests, pydub, whisper
 PY
   then
     log "Bundled Python environment is ready"

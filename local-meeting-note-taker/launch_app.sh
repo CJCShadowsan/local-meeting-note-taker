@@ -5,7 +5,7 @@ APP_ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$APP_ROOT"
 
 if ./check_ready.sh >/dev/null 2>&1; then
-  exec .venv/bin/python launcher.py
+  exec .venv/bin/python launcher.py --browser
 fi
 
 if [ -t 1 ]; then

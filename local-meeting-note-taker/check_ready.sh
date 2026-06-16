@@ -30,7 +30,7 @@ import sys
 if sys.version_info < (3, 10):
     raise SystemExit(1)
 
-required = ["flask", "requests", "pydub", "whisper", "webview"]
+required = ["flask", "requests", "pydub", "whisper"]
 for module in required:
     importlib.import_module(module)
 PY
