@@ -30,7 +30,9 @@ jobs:
           bash -n local-meeting-note-taker/*.sh
           bash -n local-meeting-note-taker/*.command
           python3 -m py_compile local-meeting-note-taker/app.py local-meeting-note-taker/launcher.py
-          ! grep -F "pywebview" local-meeting-note-taker/requirements.txt
+          if grep -F "pywebview" local-meeting-note-taker/requirements.txt; then
+            exit 1
+          fi
           grep -F "@app.post(\"/native/start\")" local-meeting-note-taker/app.py
           grep -F "@app.post(\"/native/stop\")" local-meeting-note-taker/app.py
           test -f macos/LocalMeetingNoteTaker.icns
@@ -52,7 +54,9 @@ jobs:
           unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -F "Local Meeting Note Taker.app/Contents/Resources/LocalMeetingNoteTaker.icns"
           unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -F "Local Meeting Note Taker.app/Contents/Resources/local-meeting-note-taker/app.py"
           unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -F "Local Meeting Note Taker.app/Contents/Resources/local-meeting-note-taker/launch_app.sh"
-          unzip -p LocalMeetingNoteTaker-redistributable.zip "Local Meeting Note Taker.app/Contents/Resources/local-meeting-note-taker/requirements.txt" | ( ! grep -F "pywebview" )
+          if unzip -p LocalMeetingNoteTaker-redistributable.zip "Local Meeting Note Taker.app/Contents/Resources/local-meeting-note-taker/requirements.txt" | grep -F "pywebview"; then
+            exit 1
+          fi
           unzip -p LocalMeetingNoteTaker-redistributable.zip "Local Meeting Note Taker.app/Contents/Resources/local-meeting-note-taker/app.py" | grep -F '@app.post("/native/start")'
           unzip -p LocalMeetingNoteTaker-redistributable.zip "Local Meeting Note Taker.app/Contents/Resources/local-meeting-note-taker/app.py" | grep -F '@app.post("/native/stop")'
           ! unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -F "Local Meeting Note Taker/local-meeting-note-taker/"
