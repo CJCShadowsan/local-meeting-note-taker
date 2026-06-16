@@ -1,0 +1,49 @@
+name: Release App Zip
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Build redistributable app zip
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Validate package inputs
+        run: |
+          bash -n package_redistributable.sh
+          bash -n "INSTALL - Local Meeting Note Taker.command"
+          bash -n "OPEN ME - Local Meeting Note Taker.command"
+          bash -n local-meeting-note-taker/*.sh
+          bash -n local-meeting-note-taker/*.command
+          python3 -m py_compile local-meeting-note-taker/app.py local-meeting-note-taker/launcher.py
+          plutil -lint "Local Meeting Note Taker.app/Contents/Info.plist"
+          plutil -lint "local-meeting-note-taker/Local Meeting Note Taker.app/Contents/Info.plist"
+
+      - name: Build redistributable zip
+        run: ./package_redistributable.sh
+
+      - name: Verify redistributable zip
+        run: |
+          test -f LocalMeetingNoteTaker-redistributable.zip
+          unzip -l LocalMeetingNoteTaker-redistributable.zip
+          ! unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -E '(^|/)(\.git|\.github|\.venv|__pycache__|\.package-work)(/|$)'
+          ! unzip -l LocalMeetingNoteTaker-redistributable.zip | grep -E 'data/(uploads|notes|results|logs|native-recordings)/.+'
+
+      - name: Attach zip to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            LocalMeetingNoteTaker-redistributable.zip \
+            --clobber
+

@@ -12,6 +12,7 @@ mkdir -p "$PACKAGE_ROOT"
 rsync -a \
   --exclude ".DS_Store" \
   --exclude ".git/" \
+  --exclude ".github/" \
   --exclude ".package-work/" \
   --exclude "LocalMeetingNoteTaker-redistributable.zip" \
   --exclude "local-meeting-note-taker/.venv/" \
@@ -38,4 +39,3 @@ rm -f "$ZIP_PATH"
 (cd "$WORK_DIR" && /usr/bin/ditto -c -k --sequesterRsrc --keepParent "Local Meeting Note Taker" "$ZIP_PATH")
 
 echo "Created $ZIP_PATH"
-

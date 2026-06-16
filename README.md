@@ -76,6 +76,20 @@ From the repo root:
 
 The generated zip excludes local `.venv`, logs, notes, uploads, recordings, and machine-specific PID/port files.
 
+## Release Automation
+
+GitHub Actions builds the redistributable zip only when a GitHub Release is published. Normal pushes and pull requests do not build artifacts.
+
+To publish a release:
+
+```bash
+git tag v0.1.1
+git push origin v0.1.1
+gh release create v0.1.1 --title "Local Meeting Note Taker v0.1.1" --notes "Release notes"
+```
+
+The release workflow builds `LocalMeetingNoteTaker-redistributable.zip` and attaches it to that release.
+
 ## Project Layout
 
 ```text
@@ -97,4 +111,3 @@ The generated zip excludes local `.venv`, logs, notes, uploads, recordings, and 
 ## Notes
 
 This app is not currently Apple-signed or notarized. On a new Mac, users may need to right-click the app and choose **Open** the first time.
-
