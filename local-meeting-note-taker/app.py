@@ -20,14 +20,23 @@ from werkzeug.utils import secure_filename
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
+
+
+def configured_data_dir() -> Path:
+    value = os.getenv("LMNT_DATA_DIR", "").strip()
+    if value:
+        return Path(value).expanduser()
+    return BASE_DIR / "data"
+
+
+DATA_DIR = configured_data_dir()
 UPLOAD_DIR = DATA_DIR / "uploads"
 RESULTS_DIR = DATA_DIR / "results"
 NOTES_DIR = DATA_DIR / "notes"
 NATIVE_RECORDINGS_DIR = DATA_DIR / "native-recordings"
 LOG_DIR = DATA_DIR / "logs"
 NATIVE_RECORDING_LOG_FILE = LOG_DIR / "native-recording.log"
-APP_VERSION = "0.1.14"
+APP_VERSION = "0.1.15"
 
 
 def app_path_env() -> str:
@@ -45,6 +54,33 @@ os.environ["PATH"] = app_path_env()
 
 for folder in (UPLOAD_DIR, RESULTS_DIR, NOTES_DIR, NATIVE_RECORDINGS_DIR, LOG_DIR):
     folder.mkdir(parents=True, exist_ok=True)
+
+
+def migrate_legacy_data() -> None:
+    legacy_dir = BASE_DIR / "data"
+    try:
+        same_location = DATA_DIR.resolve() == legacy_dir.resolve()
+    except OSError:
+        same_location = False
+    if same_location or not legacy_dir.exists():
+        return
+
+    for child in ("uploads", "results", "notes", "native-recordings"):
+        source_dir = legacy_dir / child
+        target_dir = DATA_DIR / child
+        if not source_dir.exists():
+            continue
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for source in source_dir.iterdir():
+            target = target_dir / source.name
+            if source.is_file() and not target.exists():
+                try:
+                    shutil.copy2(source, target)
+                except OSError:
+                    continue
+
+
+migrate_legacy_data()
 
 
 ALLOWED_EXTENSIONS = {

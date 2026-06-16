@@ -21,7 +21,7 @@ It records disclosed meetings from your microphone and application audio, transc
 
 ## Quick Start
 
-From the GitHub release page, download **`LocalMeetingNoteTaker-installer.pkg`** for the easiest install. Double-click the package and follow macOS Installer; it installs **Local Meeting Note Taker.app** into `/Applications`, prepares all required local runtime components inside the installed app resource directory, sets app/helper script executable permissions, and removes quarantine from the installed app path.
+From the GitHub release page, download **`LocalMeetingNoteTaker-installer.pkg`** for the easiest install. Double-click the package and follow macOS Installer; it installs **Local Meeting Note Taker.app** into `/Applications`, prepares all required local runtime components inside the installed app resource directory, sets app/helper script executable permissions, removes quarantine from the installed app path, and ad-hoc signs the final installed app so macOS privacy permissions have a stable app identity.
 
 The release also includes **`LocalMeetingNoteTaker-redistributable.zip`** for manual installs. A zip cannot auto-install when double-clicked on macOS; Archive Utility only extracts it. If using the zip, unzip it, then drag:
 
@@ -41,7 +41,7 @@ During package installation, setup can take several minutes on a fresh Mac becau
 - an Ollama summary model
 - the default Whisper speech model
 
-Installer setup details are written to `Contents/Resources/local-meeting-note-taker/data/logs/pkg-install.log` inside the installed app. After installation, the app opens its own **Local Meeting Note Taker** window and identifies itself that way in the macOS app menu. The app uses a native Swift recording bridge instead of WebKit browser microphone capture; macOS may ask for Microphone and Screen Recording access the first time recording starts. It should not require Safari, Chrome, Terminal, or another browser.
+Installer setup details are written to `Contents/Resources/local-meeting-note-taker/data/logs/pkg-install.log` inside the installed app. Runtime notes, uploads, pid/port files, and app logs are written to `~/Library/Application Support/Local Meeting Note Taker` so the installed `.app` bundle stays stable after signing. After installation, the app opens its own **Local Meeting Note Taker** window and identifies itself that way in the macOS app menu. The app uses a native Swift recording bridge instead of WebKit browser microphone capture; macOS may ask for Microphone and Screen Recording access the first time recording starts. It should not require Safari, Chrome, Terminal, or another browser.
 
 ## Manual Install
 
@@ -79,7 +79,7 @@ From the repo root:
 ./package_installer.sh
 ```
 
-The generated zip contains a single self-contained `Local Meeting Note Taker.app`. The generated pkg installs that app into `/Applications`, makes `Contents/Resources/local-meeting-note-taker` writable for the logged-in user, runs dependency/model setup during installation, and removes quarantine from the installed app. Both artifacts exclude local `.venv`, logs, notes, uploads, recordings, and machine-specific PID/port files.
+The generated zip contains a single self-contained `Local Meeting Note Taker.app`. The generated pkg installs that app into `/Applications`, runs dependency/model setup during installation, removes quarantine, and ad-hoc signs the final installed app for stable local privacy permissions. Both artifacts exclude local `.venv`, logs, notes, uploads, recordings, and machine-specific PID/port files.
 
 ## Release Automation
 
@@ -88,9 +88,9 @@ GitHub Actions builds the redistributable pkg and zip only when a GitHub Release
 To publish a release:
 
 ```bash
-git tag v0.1.14
-git push origin v0.1.14
-gh release create v0.1.14 --title "Local Meeting Note Taker v0.1.14" --notes "Release notes"
+git tag v0.1.15
+git push origin v0.1.15
+gh release create v0.1.15 --title "Local Meeting Note Taker v0.1.15" --notes "Release notes"
 ```
 
 The release workflow builds `LocalMeetingNoteTaker-installer.pkg` and `LocalMeetingNoteTaker-redistributable.zip`, then attaches both to that release.
@@ -121,6 +121,6 @@ The release workflow builds `LocalMeetingNoteTaker-installer.pkg` and `LocalMeet
 
 ## Notes
 
-This app is not currently Apple-signed or notarized. The installer package removes quarantine from the installed app, but the package itself may still require right-click **Open** on stricter macOS Gatekeeper setups until the project is signed and notarized with an Apple Developer ID.
+This app is ad-hoc signed by the installer so macOS can keep a stable local privacy identity for Microphone and Screen Recording permissions. It is not currently Developer ID signed or notarized, so the package itself may still require right-click **Open** on stricter macOS Gatekeeper setups until the project is signed and notarized with an Apple Developer ID.
 
 If the app window still says **Recent notes** instead of **History**, it is showing an older local server process. Current releases verify the running server belongs to the same app bundle before reusing it; older releases may need to be quit or replaced.

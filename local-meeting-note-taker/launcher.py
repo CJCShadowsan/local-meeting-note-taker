@@ -17,7 +17,16 @@ from typing import Any
 
 
 APP_ROOT = Path(__file__).resolve().parent
-DATA_DIR = APP_ROOT / "data"
+
+
+def configured_data_dir() -> Path:
+    value = os.getenv("LMNT_DATA_DIR", "").strip()
+    if value:
+        return Path(value).expanduser()
+    return APP_ROOT / "data"
+
+
+DATA_DIR = configured_data_dir()
 LOG_DIR = DATA_DIR / "logs"
 PID_FILE = DATA_DIR / "app.pid"
 PORT_FILE = DATA_DIR / "app.port"
@@ -28,7 +37,7 @@ NATIVE_RECORDINGS_DIR = DATA_DIR / "native-recordings"
 DEFAULT_PORT = int(os.getenv("APP_PORT", "5055"))
 APP_NAME = "Local Meeting Note Taker"
 APP_IDENTIFIER = "local.meeting.note.taker"
-APP_VERSION = "0.1.14"
+APP_VERSION = "0.1.15"
 APP_ICON_CANDIDATES = [
     APP_ROOT.parent / "LocalMeetingNoteTaker.icns",
     APP_ROOT / "Local Meeting Note Taker.app" / "Contents" / "Resources" / "LocalMeetingNoteTaker.icns",

@@ -1,12 +1,13 @@
 import AppKit
 import AVFoundation
+import CoreGraphics
 import CoreMedia
 import Foundation
 import ScreenCaptureKit
 import WebKit
 
 private let appName = "Local Meeting Note Taker"
-private let appVersion = "0.1.14"
+private let appVersion = "0.1.15"
 private let appPathPrefix = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 private enum RecorderError: LocalizedError {
@@ -15,6 +16,7 @@ private enum RecorderError: LocalizedError {
     case noDisplay
     case noAudio
     case noActiveRecording
+    case screenRecordingRequired
     case uploadFailed(String)
     case unsupportedSystemAudio
 
@@ -30,6 +32,8 @@ private enum RecorderError: LocalizedError {
             return "No usable audio was captured."
         case .noActiveRecording:
             return "No native recording is running."
+        case .screenRecordingRequired:
+            return "Screen & System Audio Recording access is required for application audio. Enable it for Local Meeting Note Taker in System Settings, quit and reopen the app if macOS asks, then start recording again."
         case .uploadFailed(let message):
             return message
         case .unsupportedSystemAudio:
@@ -165,7 +169,7 @@ private final class NativeMeetingRecorder {
     private var systemRecorder: SystemAudioRecorder?
     private var activeSession: RecordingSession?
 
-    func start(root: URL, settings: [String: Any], completion: @escaping ([String: Any]) -> Void) {
+    func start(dataRoot: URL, settings: [String: Any], completion: @escaping ([String: Any]) -> Void) {
         guard activeSession == nil else {
             completion(errorPayload(RecorderError.busy))
             return
@@ -180,9 +184,13 @@ private final class NativeMeetingRecorder {
                 completion(errorPayload(RecorderError.microphoneDenied))
                 return
             }
+            guard self.ensureScreenRecordingAccess() else {
+                completion(errorPayload(RecorderError.screenRecordingRequired))
+                return
+            }
 
             do {
-                let session = try self.makeSession(root: root)
+                let session = try self.makeSession(dataRoot: dataRoot)
                 let microphone = try self.startMicrophoneRecording(to: session.microphoneURL)
                 let system = SystemAudioRecorder(outputURL: session.systemURL)
 
@@ -293,8 +301,18 @@ private final class NativeMeetingRecorder {
         }
     }
 
-    private func makeSession(root: URL) throws -> RecordingSession {
-        let directory = root.appendingPathComponent("data/native-recordings")
+    private func ensureScreenRecordingAccess() -> Bool {
+        if CGPreflightScreenCaptureAccess() {
+            return true
+        }
+        if CGRequestScreenCaptureAccess() {
+            return CGPreflightScreenCaptureAccess()
+        }
+        return false
+    }
+
+    private func makeSession(dataRoot: URL) throws -> RecordingSession {
+        let directory = dataRoot.appendingPathComponent("native-recordings")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let timestamp = ISO8601DateFormatter().string(from: Date())
             .replacingOccurrences(of: ":", with: "")
@@ -480,6 +498,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var closeButton: NSButton?
     private var setupProcess: Process?
     private var appRoot: URL?
+    private var dataRoot: URL?
     private var setupLogFile: URL?
     private var serverProcess: Process?
     private var serverLogHandle: FileHandle?
@@ -498,7 +517,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
 
         appRoot = root
-        setupLogFile = setupLogURL(for: root)
+        dataRoot = prepareDataRoot()
+        setupLogFile = setupLogURL()
         continueStartup(with: root)
     }
 
@@ -540,12 +560,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return nil
     }
 
-    private func setupLogURL(for root: URL) -> URL {
-        let bundledLog = root.appendingPathComponent("data/logs/setup-window.log")
-        if prepareLogFile(bundledLog) {
-            return bundledLog
+    private func prepareDataRoot() -> URL {
+        let root = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Local Meeting Note Taker")
+        for child in ["logs", "uploads", "results", "notes", "native-recordings"] {
+            try? FileManager.default.createDirectory(
+                at: root.appendingPathComponent(child),
+                withIntermediateDirectories: true
+            )
         }
+        return root
+    }
 
+    private func setupLogURL() -> URL {
+        if let dataRoot {
+            let appSupportLog = dataRoot.appendingPathComponent("logs/setup-window.log")
+            if prepareLogFile(appSupportLog) {
+                return appSupportLog
+            }
+        }
         let fallbackLog = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Logs/Local Meeting Note Taker/setup-window.log")
         _ = prepareLogFile(fallbackLog)
@@ -639,7 +672,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         logView.backgroundColor = .textBackgroundColor
         scrollView.documentView = logView
 
-        let logPath = setupLogFile?.path ?? "data/logs/setup-window.log"
+        let logPath = setupLogFile?.path ?? "~/Library/Application Support/Local Meeting Note Taker/logs/setup-window.log"
         let logLabel = NSTextField(labelWithString: "Setup log: \(logPath)")
         logLabel.font = NSFont.systemFont(ofSize: 11)
         logLabel.textColor = .secondaryLabelColor
@@ -787,7 +820,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func ensureServerRunning(from root: URL) throws -> Int {
-        if let savedPort = readSavedPort(from: root), serverMatchesApp(port: savedPort, root: root) {
+        if let savedPort = readSavedPort(), serverMatchesApp(port: savedPort, root: root) {
             return savedPort
         }
 
@@ -820,7 +853,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         throw NSError(
             domain: appName,
             code: Int(lastExitCode),
-            userInfo: [NSLocalizedDescriptionKey: "The local server exited during startup on every available port. Check data/logs/webapp.log."]
+            userInfo: [NSLocalizedDescriptionKey: "The local server exited during startup on every available port. Check the app log in Library/Application Support/Local Meeting Note Taker/logs/webapp.log."]
         )
     }
 
@@ -848,7 +881,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             )
         }
 
-        let logFile = root.appendingPathComponent("data/logs/webapp.log")
+        let runtimeRoot = dataRoot ?? prepareDataRoot()
+        dataRoot = runtimeRoot
+        let logFile = runtimeRoot.appendingPathComponent("logs/webapp.log")
         try FileManager.default.createDirectory(at: logFile.deletingLastPathComponent(), withIntermediateDirectories: true)
         if !FileManager.default.fileExists(atPath: logFile.path) {
             FileManager.default.createFile(atPath: logFile.path, contents: nil)
@@ -867,6 +902,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             extra: [
                 "APP_HOST": "127.0.0.1",
                 "APP_PORT": String(port),
+                "LMNT_DATA_DIR": runtimeRoot.path,
                 "PYTHONUNBUFFERED": "1",
                 "PYTHONDONTWRITEBYTECODE": "1",
             ]
@@ -883,12 +919,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         serverLogHandle = logHandle
 
         try? String(process.processIdentifier).write(
-            to: root.appendingPathComponent("data/app.pid"),
+            to: runtimeRoot.appendingPathComponent("app.pid"),
             atomically: true,
             encoding: .utf8
         )
         try? String(port).write(
-            to: root.appendingPathComponent("data/app.port"),
+            to: runtimeRoot.appendingPathComponent("app.port"),
             atomically: true,
             encoding: .utf8
         )
@@ -987,11 +1023,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         switch action {
         case "start":
-            guard let root = appRoot else {
+            guard appRoot != nil else {
                 completeNativeRecorderMessage(id: messageId, payload: errorPayload(RecorderError.noAudio))
                 return
             }
-            nativeRecorder.start(root: root, settings: settings) { [weak self] payload in
+            let runtimeRoot = dataRoot ?? prepareDataRoot()
+            dataRoot = runtimeRoot
+            nativeRecorder.start(dataRoot: runtimeRoot, settings: settings) { [weak self] payload in
                 self?.completeNativeRecorderMessage(id: messageId, payload: payload)
             }
         case "stop":
@@ -1021,8 +1059,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
-    private func readSavedPort(from root: URL) -> Int? {
-        let portFile = root.appendingPathComponent("data/app.port")
+    private func readSavedPort() -> Int? {
+        let runtimeRoot = dataRoot ?? prepareDataRoot()
+        let portFile = runtimeRoot.appendingPathComponent("app.port")
         guard
             let text = try? String(contentsOf: portFile, encoding: .utf8),
             let port = Int(text.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -1095,7 +1134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             <main style="max-width:560px;border:1px solid #d9dee5;border-radius:8px;background:#fff;padding:28px;">
               <h1 style="margin-top:0;font-size:22px;">Local app did not load</h1>
               <p style="color:#65717f;line-height:1.5;">\(escapedMessage)</p>
-              <p style="color:#65717f;line-height:1.5;">Check data/logs/webapp.log inside the installed app for details.</p>
+              <p style="color:#65717f;line-height:1.5;">Check Library/Application Support/Local Meeting Note Taker/logs/webapp.log for details.</p>
             </main>
           </body>
         </html>
@@ -1180,6 +1219,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         var environment = ProcessInfo.processInfo.environment
         let existingPath = environment["PATH"] ?? ""
         environment["PATH"] = existingPath.isEmpty ? appPathPrefix : "\(appPathPrefix):\(existingPath)"
+        if let dataRoot {
+            environment["LMNT_DATA_DIR"] = dataRoot.path
+        }
         for (key, value) in extra {
             environment[key] = value
         }

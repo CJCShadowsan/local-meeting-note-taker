@@ -11,7 +11,7 @@ It uses the same core pattern from the article:
 - Whisper running locally for transcription
 - Ollama running locally for meeting-minute summaries
 
-The app supports uploading audio/video files and recording from the selected macOS audio input. It starts a private local server behind the scenes, opens its own native app window, and saves Markdown notes and JSON results under `data/notes` and `data/results`.
+The app supports uploading audio/video files and recording microphone plus application audio from the packaged macOS app. It starts a private local server behind the scenes, opens its own native app window, and saves Markdown notes and JSON results under `~/Library/Application Support/Local Meeting Note Taker`.
 
 ## Application Shape
 
@@ -19,7 +19,7 @@ This folder is the self-contained local webapp application. For source/manual ru
 
 You can move the folder elsewhere on the same Mac. If you move it to another Mac manually, the first launch can run repair setup so the Python environment and local dependencies match that machine.
 
-For distribution, use `LocalMeetingNoteTaker-installer.pkg` from the GitHub release assets for the normal install path. It installs `Local Meeting Note Taker.app` into `/Applications`, prepares all required local runtime components inside the installed app resource directory, sets executable permissions, and removes quarantine from the installed app path. The release also includes `LocalMeetingNoteTaker-redistributable.zip` for manual drag-to-Applications installs; GitHub's automatic source-code archive is not an app download.
+For distribution, use `LocalMeetingNoteTaker-installer.pkg` from the GitHub release assets for the normal install path. It installs `Local Meeting Note Taker.app` into `/Applications`, prepares all required local runtime components inside the installed app resource directory, sets executable permissions, removes quarantine from the installed app path, and ad-hoc signs the final installed app so macOS privacy permissions have a stable app identity. The release also includes `LocalMeetingNoteTaker-redistributable.zip` for manual drag-to-Applications installs; GitHub's automatic source-code archive is not an app download.
 
 ## Requirements
 
@@ -77,7 +77,7 @@ Or use the terminal commands:
 ./stop.sh
 ```
 
-Runtime logs are written to `data/logs/webapp.log`. Package install logs are written to `data/logs/pkg-install.log`, and repair setup-window logs are written to `data/logs/setup-window.log`. The saved process id and selected port are kept in `data/app.pid` and `data/app.port`.
+Runtime logs are written to `~/Library/Application Support/Local Meeting Note Taker/logs/webapp.log`. Package install logs are written to `Contents/Resources/local-meeting-note-taker/data/logs/pkg-install.log` inside the installed app, and repair setup-window logs are written to `~/Library/Application Support/Local Meeting Note Taker/logs/setup-window.log`. The saved process id and selected port are kept in `~/Library/Application Support/Local Meeting Note Taker/app.pid` and `app.port`.
 
 Browser fallback for source/manual runs:
 
@@ -95,7 +95,7 @@ Default disclosure:
 I’m recording/transcribing this meeting locally on my Mac to generate notes. The audio is processed locally, and the raw source audio will be deleted after processing unless retention is explicitly changed. Please say if you do not consent.
 ```
 
-The source audio is deleted after processing by default. Uncheck **Delete source audio after processing** only when you intentionally want to keep the raw audio under `data/uploads`.
+The source audio is deleted after processing by default. Uncheck **Delete source audio after processing** only when you intentionally want to keep the raw audio under `~/Library/Application Support/Local Meeting Note Taker/uploads`.
 
 ## Recording Meeting Audio On Mac
 
@@ -105,6 +105,8 @@ The first recording may trigger macOS privacy prompts for:
 
 - **Microphone** access for your local voice.
 - **Screen Recording** access for application audio.
+
+The packaged app checks permissions before opening audio streams. If macOS requires a relaunch after enabling Screen Recording, reopen Local Meeting Note Taker and click **Start recording** again; it should not repeat the permission prompts once both permissions are granted.
 
 Uploading an existing native Teams/Meet/Zoom recording is still the most reliable workflow, and those platforms provide their own participant recording notices.
 
@@ -144,9 +146,9 @@ Whisper model tradeoffs:
 
 Each completed run creates:
 
-- Markdown meeting notes in `data/notes`
-- JSON with transcript segments and settings in `data/results`
-- Uploaded source files in `data/uploads` only when source-audio deletion is disabled
+- Markdown meeting notes in `~/Library/Application Support/Local Meeting Note Taker/notes`
+- JSON with transcript segments and settings in `~/Library/Application Support/Local Meeting Note Taker/results`
+- Uploaded source files in `~/Library/Application Support/Local Meeting Note Taker/uploads` only when source-audio deletion is disabled
 
 The app's **History** section lists saved notes and older JSON-only transcript results. Use **Markdown** to download a saved `.md` note or generated Markdown transcript, or **Delete** then **Confirm delete** to remove the note, JSON result, uploaded source copy, and retained native recording when those artifacts are available.
 

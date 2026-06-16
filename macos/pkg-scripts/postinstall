@@ -97,6 +97,16 @@ run_setup_as_console_user() {
   /usr/bin/sudo -H -u "$CONSOLE_USER" "$RUNNER" >> "$PKG_INSTALL_LOG" 2>&1
 }
 
+sign_installed_app() {
+  local sign_log="/tmp/local-meeting-note-taker-codesign.log"
+  log "Signing installed app bundle for stable macOS privacy permissions"
+  /usr/bin/codesign --force --deep --sign - "$APP" > "$sign_log" 2>&1 \
+    || fail "Could not sign Local Meeting Note Taker.app. See $sign_log for details."
+  /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP" >> "$sign_log" 2>&1 \
+    || fail "Could not verify Local Meeting Note Taker.app signature. See $sign_log for details."
+  /bin/rm -f "$sign_log" 2>/dev/null || true
+}
+
 [ -d "$APP" ] || fail "Local Meeting Note Taker.app was not installed at $APP."
 [ -d "$APP_RESOURCES" ] || fail "Local Meeting Note Taker resources were not installed at $APP_RESOURCES."
 
@@ -134,5 +144,8 @@ run_setup_as_console_user || fail "Package setup failed. See $PKG_INSTALL_LOG fo
 log "Package-installed setup completed"
 
 /usr/bin/xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
+cleanup
+RUNNER=""
+sign_installed_app
 
 exit 0
