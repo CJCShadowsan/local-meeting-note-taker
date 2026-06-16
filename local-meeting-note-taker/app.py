@@ -1,0 +1,663 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import tempfile
+import threading
+import time
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import requests
+from flask import Flask, jsonify, render_template, request, send_file
+from werkzeug.utils import secure_filename
+
+
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
+UPLOAD_DIR = DATA_DIR / "uploads"
+RESULTS_DIR = DATA_DIR / "results"
+NOTES_DIR = DATA_DIR / "notes"
+
+for folder in (UPLOAD_DIR, RESULTS_DIR, NOTES_DIR):
+    folder.mkdir(parents=True, exist_ok=True)
+
+
+ALLOWED_EXTENSIONS = {
+    "aac",
+    "aiff",
+    "flac",
+    "m4a",
+    "m4v",
+    "mp3",
+    "mp4",
+    "ogg",
+    "wav",
+    "webm",
+}
+
+
+app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_UPLOAD_MB", "2048")) * 1024 * 1024
+
+JOBS: dict[str, dict[str, Any]] = {}
+JOBS_LOCK = threading.Lock()
+WHISPER_MODELS: dict[str, Any] = {}
+WHISPER_LOCK = threading.Lock()
+
+
+def env_default(name: str, fallback: str) -> str:
+    value = os.getenv(name, "").strip()
+    return value or fallback
+
+
+def detect_ollama_model(base_url: str, fallback: str) -> str:
+    configured = os.getenv("OLLAMA_MODEL", "").strip()
+    if configured:
+        return configured
+    try:
+        response = requests.get(base_url.rstrip("/") + "/api/tags", timeout=0.75)
+        response.raise_for_status()
+        for item in response.json().get("models", []):
+            name = item.get("name")
+            if name:
+                return str(name)
+    except Exception:
+        pass
+    return fallback
+
+
+DEFAULT_OLLAMA_BASE_URL = env_default("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+
+DEFAULTS = {
+    "whisper_model": env_default("WHISPER_MODEL", "base.en"),
+    "language": env_default("WHISPER_LANGUAGE", "en"),
+    "ollama_base_url": DEFAULT_OLLAMA_BASE_URL,
+    "ollama_model": detect_ollama_model(DEFAULT_OLLAMA_BASE_URL, "llama3.2:3b"),
+    "chunk_minutes": env_default("CHUNK_MINUTES", "10"),
+    "summary_chunk_chars": env_default("SUMMARY_CHUNK_CHARS", "12000"),
+}
+
+
+def now_iso() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def allowed_file(filename: str) -> bool:
+    suffix = Path(filename).suffix.lower().lstrip(".")
+    return suffix in ALLOWED_EXTENSIONS
+
+
+def clean_whitespace(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def slugify(value: str, fallback: str = "meeting") -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", value).strip("-").lower()
+    return slug[:72] or fallback
+
+
+def format_seconds(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
+def update_job(job_id: str, **updates: Any) -> None:
+    with JOBS_LOCK:
+        job = JOBS.setdefault(job_id, {})
+        job.update(updates)
+        job["updated_at"] = now_iso()
+
+
+def get_job(job_id: str) -> dict[str, Any] | None:
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        return dict(job) if job else None
+
+
+def parse_float(value: str, fallback: float, minimum: float, maximum: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return min(max(parsed, minimum), maximum)
+
+
+def parse_int(value: str, fallback: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return min(max(parsed, minimum), maximum)
+
+
+def parse_bool(value: str | None, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def form_settings() -> dict[str, Any]:
+    chunk_default = parse_float(DEFAULTS["chunk_minutes"], 10, 1, 30)
+    summary_default = parse_int(DEFAULTS["summary_chunk_chars"], 12000, 4000, 50000)
+    return {
+        "whisper_model": request.form.get("whisper_model", DEFAULTS["whisper_model"]).strip()
+        or DEFAULTS["whisper_model"],
+        "language": request.form.get("language", DEFAULTS["language"]).strip(),
+        "ollama_base_url": request.form.get(
+            "ollama_base_url", DEFAULTS["ollama_base_url"]
+        ).strip()
+        or DEFAULTS["ollama_base_url"],
+        "ollama_model": request.form.get("ollama_model", DEFAULTS["ollama_model"]).strip()
+        or DEFAULTS["ollama_model"],
+        "chunk_minutes": parse_float(
+            request.form.get("chunk_minutes", str(chunk_default)), chunk_default, 1, 30
+        ),
+        "summary_chunk_chars": parse_int(
+            request.form.get("summary_chunk_chars", str(summary_default)),
+            summary_default,
+            4000,
+            50000,
+        ),
+        "participants_notified": parse_bool(request.form.get("participants_notified")),
+        "delete_source_audio": parse_bool(request.form.get("delete_source_audio"), True),
+    }
+
+
+def get_whisper_model(model_name: str) -> Any:
+    with WHISPER_LOCK:
+        if model_name not in WHISPER_MODELS:
+            import whisper
+
+            kwargs: dict[str, Any] = {}
+            device = os.getenv("WHISPER_DEVICE", "").strip()
+            if device:
+                kwargs["device"] = device
+            WHISPER_MODELS[model_name] = whisper.load_model(model_name, **kwargs)
+        return WHISPER_MODELS[model_name]
+
+
+def split_audio(audio_path: Path, temp_dir: Path, segment_minutes: float) -> tuple[list[dict[str, Any]], int]:
+    from pydub import AudioSegment
+
+    audio = AudioSegment.from_file(audio_path)
+    audio = audio.set_channels(1).set_frame_rate(16000)
+    segment_ms = int(segment_minutes * 60 * 1000)
+    total_ms = len(audio)
+    segments: list[dict[str, Any]] = []
+
+    for index, start_ms in enumerate(range(0, total_ms, segment_ms), start=1):
+        end_ms = min(start_ms + segment_ms, total_ms)
+        segment = audio[start_ms:end_ms]
+        output_path = temp_dir / f"segment_{index:04d}.wav"
+        segment.export(output_path, format="wav")
+        segments.append(
+            {
+                "path": output_path,
+                "index": index,
+                "start_seconds": start_ms / 1000,
+                "end_seconds": end_ms / 1000,
+            }
+        )
+
+    return segments, total_ms
+
+
+def transcribe_segment(segment_path: Path, offset_seconds: float, settings: dict[str, Any]) -> list[dict[str, Any]]:
+    model = get_whisper_model(settings["whisper_model"])
+    kwargs: dict[str, Any] = {
+        "fp16": os.getenv("WHISPER_FP16", "").lower() in {"1", "true", "yes"},
+    }
+    if settings["language"]:
+        kwargs["language"] = settings["language"]
+
+    result = model.transcribe(str(segment_path), **kwargs)
+    raw_segments = result.get("segments") or []
+    if raw_segments:
+        return [
+            {
+                "start": offset_seconds + float(item.get("start", 0)),
+                "end": offset_seconds + float(item.get("end", 0)),
+                "text": clean_whitespace(item.get("text", "")),
+            }
+            for item in raw_segments
+            if clean_whitespace(item.get("text", ""))
+        ]
+
+    text = clean_whitespace(result.get("text", ""))
+    return [{"start": offset_seconds, "end": offset_seconds, "text": text}] if text else []
+
+
+def transcript_from_segments(segments: list[dict[str, Any]]) -> str:
+    lines = []
+    for segment in segments:
+        start = format_seconds(segment["start"])
+        end = format_seconds(segment["end"])
+        lines.append(f"[{start} - {end}] {segment['text']}")
+    return "\n".join(lines)
+
+
+def chunk_text(text: str, max_chars: int) -> list[str]:
+    paragraphs = [line.strip() for line in text.splitlines() if line.strip()]
+    chunks: list[str] = []
+    current = ""
+    for paragraph in paragraphs:
+        candidate = f"{current}\n{paragraph}".strip()
+        if len(candidate) <= max_chars:
+            current = candidate
+            continue
+        if current:
+            chunks.append(current)
+        if len(paragraph) <= max_chars:
+            current = paragraph
+        else:
+            for start in range(0, len(paragraph), max_chars):
+                chunks.append(paragraph[start : start + max_chars])
+            current = ""
+    if current:
+        chunks.append(current)
+    return chunks or [text[:max_chars]]
+
+
+def query_ollama(prompt: str, settings: dict[str, Any]) -> str:
+    url = settings["ollama_base_url"].rstrip("/") + "/api/generate"
+    payload = {
+        "model": settings["ollama_model"],
+        "prompt": prompt,
+        "stream": False,
+        "options": {"temperature": 0.2},
+    }
+    response = requests.post(url, json=payload, timeout=(5, 900))
+    response.raise_for_status()
+    data = response.json()
+    if data.get("error"):
+        raise RuntimeError(data["error"])
+    return str(data.get("response", "")).strip()
+
+
+def minutes_prompt(title: str, transcript: str) -> str:
+    return f"""You are a careful meeting note taker. Produce concise professional meeting minutes in Markdown.
+
+Meeting title: {title or "Untitled meeting"}
+
+Return exactly these sections:
+# Meeting Minutes
+## Overview
+## Decisions
+## Action Items
+Use a Markdown table with columns Owner, Task, Due Date. Use "Unassigned" or "Not stated" when needed.
+## Risks And Follow-ups
+## Key Details
+
+Transcript:
+---
+{transcript}
+"""
+
+
+def section_prompt(title: str, section_number: int, section_count: int, transcript: str) -> str:
+    return f"""Summarize section {section_number} of {section_count} from this meeting transcript.
+Capture decisions, action items with owners/due dates, risks, follow-ups, and important details.
+Return compact Markdown bullets only.
+
+Meeting title: {title or "Untitled meeting"}
+
+Transcript section:
+---
+{transcript}
+"""
+
+
+def final_minutes_prompt(title: str, partial_summaries: list[str]) -> str:
+    summaries = "\n\n---\n\n".join(partial_summaries)
+    return f"""Combine these section summaries into final professional meeting minutes in Markdown.
+
+Meeting title: {title or "Untitled meeting"}
+
+Return exactly these sections:
+# Meeting Minutes
+## Overview
+## Decisions
+## Action Items
+Use a Markdown table with columns Owner, Task, Due Date. Merge duplicates.
+## Risks And Follow-ups
+## Key Details
+
+Section summaries:
+---
+{summaries}
+"""
+
+
+def fallback_minutes(title: str, transcript: str, error: Exception) -> str:
+    sentences = re.split(r"(?<=[.!?])\s+", clean_whitespace(transcript))
+    keywords = ("action", "todo", "follow up", "owner", "deadline", "decide", "decision", "risk", "next")
+    notable = [sentence for sentence in sentences if any(word in sentence.lower() for word in keywords)]
+    notable = notable[:12]
+    excerpt = "\n".join(transcript.splitlines()[:18])
+
+    notable_block = "\n".join(f"- {item}" for item in notable) or "- No obvious action-oriented lines were detected."
+    return f"""# Meeting Minutes
+
+## Overview
+Ollama summarization was unavailable, so this fallback note was generated from the transcript.
+
+## Decisions
+- Not detected by the fallback summarizer.
+
+## Action Items
+| Owner | Task | Due Date |
+| --- | --- | --- |
+| Unassigned | Review transcript manually for actions. | Not stated |
+
+## Risks And Follow-ups
+{notable_block}
+
+## Key Details
+Meeting title: {title or "Untitled meeting"}
+
+Ollama error: `{type(error).__name__}: {error}`
+
+Transcript excerpt:
+
+```text
+{excerpt}
+```
+"""
+
+
+def summarize_transcript(job_id: str, title: str, transcript: str, settings: dict[str, Any]) -> tuple[str, str]:
+    if not transcript.strip():
+        return "# Meeting Minutes\n\nNo speech was detected in the audio.", "skipped"
+
+    chunks = chunk_text(transcript, int(settings["summary_chunk_chars"]))
+    try:
+        if len(chunks) == 1:
+            update_job(job_id, phase="Summarizing transcript with Ollama", progress=92)
+            return query_ollama(minutes_prompt(title, transcript), settings), "ollama"
+
+        partial_summaries = []
+        for index, chunk in enumerate(chunks, start=1):
+            progress = 82 + int((index / len(chunks)) * 10)
+            update_job(
+                job_id,
+                phase=f"Summarizing transcript section {index}/{len(chunks)}",
+                progress=progress,
+            )
+            partial_summaries.append(query_ollama(section_prompt(title, index, len(chunks), chunk), settings))
+        update_job(job_id, phase="Combining section summaries", progress=94)
+        return query_ollama(final_minutes_prompt(title, partial_summaries), settings), "ollama"
+    except Exception as error:
+        return fallback_minutes(title, transcript, error), "fallback"
+
+
+def save_outputs(
+    job_id: str,
+    title: str,
+    source_filename: str,
+    duration_seconds: float,
+    transcript: str,
+    segments: list[dict[str, Any]],
+    minutes: str,
+    summary_mode: str,
+    settings: dict[str, Any],
+) -> tuple[Path, Path]:
+    created = datetime.now().strftime("%Y%m%d-%H%M%S")
+    note_slug = slugify(title or Path(source_filename).stem)
+    basename = f"{created}-{note_slug}-{job_id[:8]}"
+    json_path = RESULTS_DIR / f"{basename}.json"
+    markdown_path = NOTES_DIR / f"{basename}.md"
+
+    result = {
+        "job_id": job_id,
+        "title": title,
+        "source_filename": source_filename,
+        "created_at": now_iso(),
+        "duration_seconds": duration_seconds,
+        "summary_mode": summary_mode,
+        "participants_notified": settings["participants_notified"],
+        "delete_source_audio": settings["delete_source_audio"],
+        "settings": settings,
+        "minutes": minutes,
+        "transcript": transcript,
+        "segments": segments,
+    }
+    json_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+
+    markdown = f"""---
+title: {title or Path(source_filename).stem}
+source: {source_filename}
+created: {result["created_at"]}
+duration: {format_seconds(duration_seconds)}
+summary_mode: {summary_mode}
+participants_notified: {str(settings["participants_notified"]).lower()}
+delete_source_audio: {str(settings["delete_source_audio"]).lower()}
+---
+
+{minutes}
+
+---
+
+# Full Transcript
+
+```text
+{transcript}
+```
+"""
+    markdown_path.write_text(markdown, encoding="utf-8")
+    return markdown_path, json_path
+
+
+def delete_source_audio(file_path: Path) -> bool:
+    try:
+        file_path.unlink(missing_ok=True)
+        return True
+    except Exception:
+        return False
+
+
+def process_audio_file(job_id: str, file_path: Path, original_filename: str, title: str, settings: dict[str, Any]) -> None:
+    try:
+        update_job(job_id, status="running", phase="Preparing audio", progress=5)
+        with tempfile.TemporaryDirectory(prefix="local-note-taker-") as temp_name:
+            temp_dir = Path(temp_name)
+            audio_segments, duration_ms = split_audio(file_path, temp_dir, settings["chunk_minutes"])
+            if not audio_segments:
+                raise RuntimeError("No audio segments were created from the file.")
+
+            update_job(
+                job_id,
+                phase=f"Loading Whisper model {settings['whisper_model']}",
+                progress=12,
+                segment_count=len(audio_segments),
+            )
+            get_whisper_model(settings["whisper_model"])
+
+            transcript_segments: list[dict[str, Any]] = []
+            for index, segment in enumerate(audio_segments, start=1):
+                transcribe_progress = 15 + int((index - 1) / len(audio_segments) * 65)
+                update_job(
+                    job_id,
+                    phase=f"Transcribing segment {index}/{len(audio_segments)}",
+                    progress=transcribe_progress,
+                )
+                transcript_segments.extend(
+                    transcribe_segment(segment["path"], float(segment["start_seconds"]), settings)
+                )
+
+        transcript = transcript_from_segments(transcript_segments)
+        update_job(job_id, phase="Preparing meeting minutes", progress=82, transcript=transcript)
+        minutes, summary_mode = summarize_transcript(job_id, title, transcript, settings)
+        markdown_path, json_path = save_outputs(
+            job_id,
+            title,
+            original_filename,
+            duration_ms / 1000,
+            transcript,
+            transcript_segments,
+            minutes,
+            summary_mode,
+            settings,
+        )
+        update_job(
+            job_id,
+            status="completed",
+            phase="Completed",
+            progress=100,
+            minutes=minutes,
+            transcript=transcript,
+            summary_mode=summary_mode,
+            markdown_path=str(markdown_path),
+            json_path=str(json_path),
+        )
+    except Exception as error:
+        update_job(
+            job_id,
+            status="failed",
+            phase="Failed",
+            progress=100,
+            error=f"{type(error).__name__}: {error}",
+        )
+    finally:
+        if settings.get("delete_source_audio", True):
+            update_job(job_id, source_deleted=delete_source_audio(file_path))
+
+
+def ollama_status(base_url: str) -> dict[str, Any]:
+    try:
+        response = requests.get(base_url.rstrip("/") + "/api/tags", timeout=2)
+        response.raise_for_status()
+        models = [item.get("name") for item in response.json().get("models", [])]
+        return {"ok": True, "models": [item for item in models if item]}
+    except Exception as error:
+        return {"ok": False, "error": f"{type(error).__name__}: {error}"}
+
+
+def import_status(module_name: str) -> dict[str, Any]:
+    try:
+        __import__(module_name)
+        return {"ok": True}
+    except Exception as error:
+        return {"ok": False, "error": f"{type(error).__name__}: {error}"}
+
+
+@app.get("/")
+def index() -> str:
+    return render_template("index.html", defaults=DEFAULTS)
+
+
+@app.get("/health")
+def health() -> Any:
+    whisper_check = import_status("whisper")
+    pydub_check = import_status("pydub")
+    return jsonify(
+        {
+            "defaults": DEFAULTS,
+            "checks": {
+                "ffmpeg": bool(shutil.which("ffmpeg")),
+                "whisper_package": whisper_check["ok"],
+                "whisper_error": whisper_check.get("error"),
+                "pydub_package": pydub_check["ok"],
+                "pydub_error": pydub_check.get("error"),
+            },
+            "ollama": ollama_status(DEFAULTS["ollama_base_url"]),
+        }
+    )
+
+
+@app.get("/notes")
+def list_notes() -> Any:
+    notes = []
+    for path in sorted(NOTES_DIR.glob("*.md"), reverse=True)[:12]:
+        notes.append(
+            {
+                "name": path.name,
+                "size": path.stat().st_size,
+                "modified": datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"),
+            }
+        )
+    return jsonify({"notes": notes})
+
+
+@app.post("/upload")
+def upload_file() -> Any:
+    if "file" not in request.files:
+        return jsonify({"error": "No file was uploaded."}), 400
+
+    file = request.files["file"]
+    if not file or not file.filename:
+        return jsonify({"error": "Choose an audio file first."}), 400
+
+    if not allowed_file(file.filename):
+        return jsonify({"error": f"Unsupported file type: {Path(file.filename).suffix}"}), 400
+
+    settings = form_settings()
+    if not settings["participants_notified"]:
+        return jsonify({"error": "Confirm participant notice before recording or uploading."}), 400
+
+    original_filename = secure_filename(file.filename)
+    job_id = str(uuid.uuid4())
+    saved_filename = f"{job_id}-{original_filename}"
+    file_path = UPLOAD_DIR / saved_filename
+    file.save(file_path)
+
+    title = request.form.get("title", "").strip()
+    with JOBS_LOCK:
+        JOBS[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "phase": "Queued",
+            "progress": 0,
+            "source_filename": original_filename,
+            "title": title,
+            "settings": settings,
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+        }
+
+    worker = threading.Thread(
+        target=process_audio_file,
+        args=(job_id, file_path, original_filename, title, settings),
+        daemon=True,
+    )
+    worker.start()
+    return jsonify({"job_id": job_id, "status": "queued"})
+
+
+@app.get("/status/<job_id>")
+def status(job_id: str) -> Any:
+    job = get_job(job_id)
+    if not job:
+        return jsonify({"error": "Unknown job."}), 404
+    if job.get("markdown_path"):
+        job["markdown_download"] = f"/download/{job_id}/markdown"
+    if job.get("json_path"):
+        job["json_download"] = f"/download/{job_id}/json"
+    return jsonify(job)
+
+
+@app.get("/download/<job_id>/<kind>")
+def download(job_id: str, kind: str) -> Any:
+    job = get_job(job_id)
+    if not job:
+        return jsonify({"error": "Unknown job."}), 404
+    key = "markdown_path" if kind == "markdown" else "json_path" if kind == "json" else ""
+    if not key or not job.get(key):
+        return jsonify({"error": "Result is not ready."}), 404
+    path = Path(str(job[key]))
+    if not path.exists():
+        return jsonify({"error": "Saved result was not found."}), 404
+    return send_file(path, as_attachment=True)
+
+
+if __name__ == "__main__":
+    host = os.getenv("APP_HOST", "127.0.0.1")
+    port = int(os.getenv("APP_PORT", "5055"))
+    print(f"Local Meeting Note Taker: http://{host}:{port}")
+    app.run(host=host, port=port, debug=os.getenv("FLASK_DEBUG", "") == "1")

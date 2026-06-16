@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+OUTPUTS_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
+APP_ROOT="$OUTPUTS_DIR/local-meeting-note-taker"
+exec "$APP_ROOT/launch_app.sh"

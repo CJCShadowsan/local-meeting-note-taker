@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDisplayName</key>
+  <string>Local Meeting Note Taker</string>
+  <key>CFBundleExecutable</key>
+  <string>LocalMeetingNoteTaker</string>
+  <key>CFBundleIdentifier</key>
+  <string>local.meeting.note.taker.launcher</string>
+  <key>CFBundleName</key>
+  <string>Local Meeting Note Taker</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Local Meeting Note Taker uses the microphone or selected macOS audio input to record disclosed meetings for local transcription.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>Local Meeting Note Taker does not record camera video.</string>
+  <key>NSCameraUseContinuityCameraDeviceType</key>
+  <true/>
+</dict>
+</plist>

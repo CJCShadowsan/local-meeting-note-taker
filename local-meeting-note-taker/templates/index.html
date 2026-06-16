@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Local Meeting Note Taker</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+    <script defer src="{{ url_for('static', filename='app.js') }}"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Private meeting notes</p>
+          <h1>Local Meeting Note Taker</h1>
+        </div>
+        <div id="healthChips" class="health-chips" aria-live="polite"></div>
+      </header>
+
+      <section class="workspace" aria-label="Meeting note workspace">
+        <div class="panel">
+          <div class="section-head">
+            <h2>Capture</h2>
+            <span id="recordTimer" class="timer">00:00</span>
+          </div>
+
+          <label class="field" for="meetingTitle">
+            <span>Meeting title</span>
+            <input id="meetingTitle" name="title" type="text" placeholder="Weekly product sync" />
+          </label>
+
+          <div class="disclosure-box">
+            <label class="field" for="disclosureText">
+              <span>Chat disclosure</span>
+              <textarea id="disclosureText" rows="4" readonly>I’m recording/transcribing this meeting locally on my Mac to generate notes. The audio is processed locally, and the raw source audio will be deleted after processing unless retention is explicitly changed. Please say if you do not consent.</textarea>
+            </label>
+            <div class="button-row">
+              <button id="copyDisclosure" class="secondary" type="button">Copy disclosure</button>
+            </div>
+            <label class="check-row" for="participantsNotified">
+              <input id="participantsNotified" type="checkbox" />
+              <span>Participants informed / consent captured</span>
+            </label>
+            <label class="check-row" for="deleteSourceAudio">
+              <input id="deleteSourceAudio" type="checkbox" checked />
+              <span>Delete source audio after processing</span>
+            </label>
+          </div>
+
+          <div id="dropZone" class="drop-zone" tabindex="0">
+            <input
+              id="fileInput"
+              type="file"
+              accept=".aac,.aiff,.flac,.m4a,.m4v,.mp3,.mp4,.ogg,.wav,.webm,audio/*,video/*"
+              hidden
+            />
+            <button id="chooseButton" class="secondary" type="button">Choose audio</button>
+            <p id="fileName">No file selected</p>
+          </div>
+
+          <div class="button-row">
+            <button id="uploadButton" type="button" disabled>Upload and transcribe</button>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="recorder">
+            <button id="recordButton" type="button">Start recording</button>
+            <button id="stopButton" class="secondary" type="button" disabled>Stop</button>
+            <span id="recordingState" class="muted">Microphone idle</span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="section-head">
+            <h2>Models</h2>
+            <button id="refreshHealth" class="icon-button" type="button" title="Refresh checks">↻</button>
+          </div>
+
+          <div class="settings-grid">
+            <label class="field" for="whisperModel">
+              <span>Whisper</span>
+              <input id="whisperModel" type="text" value="{{ defaults.whisper_model }}" />
+            </label>
+            <label class="field" for="language">
+              <span>Language</span>
+              <input id="language" type="text" value="{{ defaults.language }}" />
+            </label>
+            <label class="field" for="ollamaModel">
+              <span>Ollama</span>
+              <input id="ollamaModel" type="text" value="{{ defaults.ollama_model }}" />
+            </label>
+            <label class="field" for="chunkMinutes">
+              <span>Chunk minutes</span>
+              <input id="chunkMinutes" type="number" min="1" max="30" step="1" value="{{ defaults.chunk_minutes }}" />
+            </label>
+          </div>
+
+          <label class="field full" for="ollamaBaseUrl">
+            <span>Ollama URL</span>
+            <input id="ollamaBaseUrl" type="url" value="{{ defaults.ollama_base_url }}" />
+          </label>
+
+          <label class="field full" for="summaryChunkChars">
+            <span>Summary chunk chars</span>
+            <input
+              id="summaryChunkChars"
+              type="number"
+              min="4000"
+              max="50000"
+              step="1000"
+              value="{{ defaults.summary_chunk_chars }}"
+            />
+          </label>
+
+          <label class="field full" for="nativeAudioDevice">
+            <span>Mac input device</span>
+            <input id="nativeAudioDevice" type="text" value=":0" />
+          </label>
+        </div>
+      </section>
+
+      <section class="panel status-panel" aria-live="polite">
+        <div class="section-head">
+          <h2>Status</h2>
+          <span id="jobId" class="job-id">Ready</span>
+        </div>
+        <div class="progress-track">
+          <div id="progressFill" class="progress-fill"></div>
+        </div>
+        <p id="statusText" class="status-text">Choose an audio file or start a browser recording.</p>
+      </section>
+
+      <section id="resultPanel" class="panel results" hidden>
+        <div class="section-head">
+          <h2>Result</h2>
+          <div class="download-row">
+            <button id="copyButton" class="secondary" type="button">Copy</button>
+            <a id="markdownDownload" class="download-link" href="#" hidden>Markdown</a>
+            <a id="jsonDownload" class="download-link" href="#" hidden>JSON</a>
+          </div>
+        </div>
+
+        <div class="tabs" role="tablist" aria-label="Result views">
+          <button class="tab active" type="button" data-tab="minutes">Minutes</button>
+          <button class="tab" type="button" data-tab="transcript">Transcript</button>
+        </div>
+        <pre id="resultContent" class="result-content"></pre>
+      </section>
+
+      <section class="panel recent-panel">
+        <div class="section-head">
+          <h2>Recent notes</h2>
+          <button id="refreshNotes" class="icon-button" type="button" title="Refresh recent notes">↻</button>
+        </div>
+        <ul id="notesList" class="notes-list"></ul>
+      </section>
+    </main>
+  </body>
+</html>
