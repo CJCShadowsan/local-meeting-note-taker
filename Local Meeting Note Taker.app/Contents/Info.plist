@@ -16,11 +16,11 @@
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.16</string>
+  <string>0.1.17</string>
   <key>CFBundleVersion</key>
-  <string>16</string>
+  <string>17</string>
   <key>LSMinimumSystemVersion</key>
-  <string>13.0</string>
+  <string>14.2</string>
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsLocalNetworking</key>
@@ -30,8 +30,6 @@
   <true/>
   <key>NSMicrophoneUsageDescription</key>
   <string>Local Meeting Note Taker uses the microphone or selected macOS audio input to record disclosed meetings for local transcription.</string>
-  <key>NSScreenCaptureUsageDescription</key>
-  <string>Local Meeting Note Taker captures application audio from your Mac so meeting speakers and your microphone can be transcribed together.</string>
   <key>NSCameraUsageDescription</key>
   <string>Local Meeting Note Taker does not record camera video.</string>
   <key>NSCameraUseContinuityCameraDeviceType</key>

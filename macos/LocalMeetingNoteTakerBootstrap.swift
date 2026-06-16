@@ -1,22 +1,19 @@
 import AppKit
 import AVFoundation
-import CoreGraphics
-import CoreMedia
+import CoreAudio
 import Foundation
-import ScreenCaptureKit
 import WebKit
 
 private let appName = "Local Meeting Note Taker"
-private let appVersion = "0.1.16"
+private let appVersion = "0.1.17"
 private let appPathPrefix = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 private enum RecorderError: LocalizedError {
     case busy
     case microphoneDenied
-    case noDisplay
     case noAudio
     case noActiveRecording
-    case screenRecordingRequired
+    case systemAudioRequired(String)
     case uploadFailed(String)
     case unsupportedSystemAudio
 
@@ -26,134 +23,218 @@ private enum RecorderError: LocalizedError {
             return "A recording is already running."
         case .microphoneDenied:
             return "Microphone access was not granted for Local Meeting Note Taker."
-        case .noDisplay:
-            return "No display was available for application audio capture."
         case .noAudio:
             return "No usable audio was captured."
         case .noActiveRecording:
             return "No native recording is running."
-        case .screenRecordingRequired:
-            return "Screen & System Audio Recording access is required for application audio. Enable it for Local Meeting Note Taker in System Settings, quit and reopen the app if macOS asks, then start recording again."
+        case .systemAudioRequired(let detail):
+            return "System Audio Recording access is required for application audio. Enable it for Local Meeting Note Taker in System Settings if macOS asks, then start recording again. \(detail)"
         case .uploadFailed(let message):
             return message
         case .unsupportedSystemAudio:
-            return "Application audio capture requires macOS 13 or newer."
+            return "Application audio capture requires macOS 14.2 or newer."
         }
     }
 }
 
-private final class SystemAudioRecorder: NSObject, SCStreamOutput {
+private final class SystemAudioRecorder {
     private let outputURL: URL
-    private let sampleQueue = DispatchQueue(label: "local.meeting.note.taker.system-audio")
-    private var stream: SCStream?
-    private var writer: AVAssetWriter?
-    private var writerInput: AVAssetWriterInput?
-    private var writingStarted = false
+    private let ioQueue = DispatchQueue(label: "local.meeting.note.taker.system-audio")
+    private var tapID = AudioObjectID(kAudioObjectUnknown)
+    private var aggregateDeviceID = AudioObjectID(kAudioObjectUnknown)
+    private var ioProcID: AudioDeviceIOProcID?
+    private var audioFile: AVAudioFile?
+    private var format: AVAudioFormat?
     private var capturedAudio = false
 
     init(outputURL: URL) {
         self.outputURL = outputURL
-        super.init()
     }
 
-    func start() async throws {
+    func start() throws {
+        guard #available(macOS 14.2, *) else {
+            throw RecorderError.unsupportedSystemAudio
+        }
+
+        capturedAudio = false
         try? FileManager.default.removeItem(at: outputURL)
 
-        let writer = try AVAssetWriter(outputURL: outputURL, fileType: .m4a)
-        let audioSettings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 48_000,
-            AVNumberOfChannelsKey: 2,
-            AVEncoderBitRateKey: 192_000,
-        ]
-        let input = AVAssetWriterInput(mediaType: .audio, outputSettings: audioSettings)
-        input.expectsMediaDataInRealTime = true
-        guard writer.canAdd(input) else {
-            throw RecorderError.noAudio
-        }
-        writer.add(input)
+        let tapDescription = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+        tapDescription.name = "\(appName) Application Audio"
+        tapDescription.isPrivate = true
+        tapDescription.muteBehavior = .unmuted
 
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        guard let display = content.displays.first else {
-            throw RecorderError.noDisplay
-        }
+        var newTapID = AudioObjectID(kAudioObjectUnknown)
+        try checkAudioStatus(
+            AudioHardwareCreateProcessTap(tapDescription, &newTapID),
+            operation: "Create system audio tap"
+        )
+        tapID = newTapID
 
-        let configuration = SCStreamConfiguration()
-        configuration.width = 2
-        configuration.height = 2
-        configuration.showsCursor = false
-        configuration.capturesAudio = true
-        configuration.sampleRate = 48_000
-        configuration.channelCount = 2
-        configuration.excludesCurrentProcessAudio = true
-
-        let filter = SCContentFilter(display: display, excludingWindows: [])
-        let stream = SCStream(filter: filter, configuration: configuration, delegate: nil)
-        try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: sampleQueue)
-
-        self.writer = writer
-        self.writerInput = input
-        self.stream = stream
-        try await stream.startCapture()
-    }
-
-    func stop() async -> URL? {
-        if let stream {
-            try? await stream.stopCapture()
-        }
-
-        return await withCheckedContinuation { continuation in
-            sampleQueue.async {
-                guard let writer = self.writer, let input = self.writerInput else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-
-                self.stream = nil
-                self.writer = nil
-                self.writerInput = nil
-
-                guard self.writingStarted else {
-                    writer.cancelWriting()
-                    try? FileManager.default.removeItem(at: self.outputURL)
-                    continuation.resume(returning: nil)
-                    return
-                }
-
-                input.markAsFinished()
-                writer.finishWriting {
-                    let usable = writer.status == .completed
-                        && self.capturedAudio
-                        && NativeMeetingRecorder.usableAudioFile(self.outputURL)
-                    continuation.resume(returning: usable ? self.outputURL : nil)
-                }
+        do {
+            let tapUID = try getTapUID(newTapID)
+            var streamFormat = try getTapFormat(newTapID)
+            guard let avFormat = AVAudioFormat(streamDescription: &streamFormat) else {
+                throw RecorderError.noAudio
             }
+            format = avFormat
+            audioFile = try AVAudioFile(forWriting: outputURL, settings: avFormat.settings)
+
+            let aggregateUID = "local.meeting.note.taker.\(UUID().uuidString)"
+            let tapDictionary: [String: Any] = [
+                String(kAudioSubTapUIDKey): tapUID,
+                String(kAudioSubTapDriftCompensationKey): true,
+            ]
+            let aggregateDescription: [String: Any] = [
+                String(kAudioAggregateDeviceNameKey): "\(appName) Audio Capture",
+                String(kAudioAggregateDeviceUIDKey): aggregateUID,
+                String(kAudioAggregateDeviceIsPrivateKey): true,
+                String(kAudioAggregateDeviceTapListKey): [tapDictionary],
+            ]
+
+            var newAggregateDeviceID = AudioObjectID(kAudioObjectUnknown)
+            try checkAudioStatus(
+                AudioHardwareCreateAggregateDevice(aggregateDescription as CFDictionary, &newAggregateDeviceID),
+                operation: "Create system audio capture device"
+            )
+            aggregateDeviceID = newAggregateDeviceID
+
+            var newIOProcID: AudioDeviceIOProcID?
+            try checkAudioStatus(
+                AudioDeviceCreateIOProcIDWithBlock(&newIOProcID, newAggregateDeviceID, ioQueue) { [weak self] _, inputData, _, _, _ in
+                    self?.writeInputData(inputData)
+                },
+                operation: "Create system audio input callback"
+            )
+            guard let newIOProcID else {
+                throw RecorderError.noAudio
+            }
+            ioProcID = newIOProcID
+
+            try checkAudioStatus(
+                AudioDeviceStart(newAggregateDeviceID, newIOProcID),
+                operation: "Start system audio capture"
+            )
+        } catch {
+            cleanup()
+            throw error
         }
     }
 
-    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .audio,
-              sampleBuffer.isValid,
-              CMSampleBufferDataIsReady(sampleBuffer),
-              let writer,
-              let input = writerInput,
-              input.isReadyForMoreMediaData
-        else {
+    func stop() -> URL? {
+        if aggregateDeviceID != AudioObjectID(kAudioObjectUnknown), let ioProcID {
+            _ = AudioDeviceStop(aggregateDeviceID, ioProcID)
+        }
+        cleanup()
+
+        guard capturedAudio, NativeMeetingRecorder.usableAudioFile(outputURL) else {
+            try? FileManager.default.removeItem(at: outputURL)
+            return nil
+        }
+        return outputURL
+    }
+
+    private func writeInputData(_ inputData: UnsafePointer<AudioBufferList>?) {
+        guard let inputData, let format, let audioFile else {
             return
         }
 
-        let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-        if !writingStarted {
-            guard writer.startWriting() else {
-                return
-            }
-            writer.startSession(atSourceTime: timestamp)
-            writingStarted = true
+        let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputData))
+        let byteSize = buffers.reduce(0) { max($0, Int($1.mDataByteSize)) }
+        guard byteSize > 0 else {
+            return
         }
 
-        if input.append(sampleBuffer) {
-            capturedAudio = true
+        let bytesPerFrame = Int(format.streamDescription.pointee.mBytesPerFrame)
+        guard bytesPerFrame > 0 else {
+            return
         }
+
+        let frameLength = AVAudioFrameCount(byteSize / bytesPerFrame)
+        guard frameLength > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: inputData)
+        else {
+            return
+        }
+        buffer.frameLength = min(frameLength, buffer.frameCapacity)
+
+        do {
+            try audioFile.write(from: buffer)
+            capturedAudio = true
+        } catch {
+            return
+        }
+    }
+
+    private func getTapUID(_ tapID: AudioObjectID) throws -> String {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioTapPropertyUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        var tapUID: Unmanaged<CFString>?
+        try checkAudioStatus(
+            AudioObjectGetPropertyData(tapID, &address, 0, nil, &dataSize, &tapUID),
+            operation: "Read system audio tap identifier"
+        )
+        guard let tapUID = tapUID?.takeRetainedValue() else {
+            throw RecorderError.noAudio
+        }
+        return tapUID as String
+    }
+
+    private func getTapFormat(_ tapID: AudioObjectID) throws -> AudioStreamBasicDescription {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioTapPropertyFormat,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var streamDescription = AudioStreamBasicDescription()
+        var dataSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        try checkAudioStatus(
+            AudioObjectGetPropertyData(tapID, &address, 0, nil, &dataSize, &streamDescription),
+            operation: "Read system audio format"
+        )
+        return streamDescription
+    }
+
+    private func cleanup() {
+        audioFile = nil
+        format = nil
+        if aggregateDeviceID != AudioObjectID(kAudioObjectUnknown) {
+            if let ioProcID {
+                _ = AudioDeviceDestroyIOProcID(aggregateDeviceID, ioProcID)
+            }
+            _ = AudioHardwareDestroyAggregateDevice(aggregateDeviceID)
+        }
+        if #available(macOS 14.2, *), tapID != AudioObjectID(kAudioObjectUnknown) {
+            _ = AudioHardwareDestroyProcessTap(tapID)
+        }
+        ioProcID = nil
+        aggregateDeviceID = AudioObjectID(kAudioObjectUnknown)
+        tapID = AudioObjectID(kAudioObjectUnknown)
+    }
+
+    private func checkAudioStatus(_ status: OSStatus, operation: String) throws {
+        guard status == noErr else {
+            throw RecorderError.systemAudioRequired("\(operation) failed with OSStatus \(formatOSStatus(status)).")
+        }
+    }
+
+    private func formatOSStatus(_ status: OSStatus) -> String {
+        let unsigned = UInt32(bitPattern: status)
+        let bytes: [UInt8] = [
+            UInt8((unsigned >> 24) & 0xff),
+            UInt8((unsigned >> 16) & 0xff),
+            UInt8((unsigned >> 8) & 0xff),
+            UInt8(unsigned & 0xff),
+        ]
+        if bytes.allSatisfy({ $0 >= 32 && $0 <= 126 }),
+           let fourCC = String(bytes: bytes, encoding: .ascii) {
+            return "'\(fourCC)' (\(status))"
+        }
+        return "\(status)"
     }
 }
 
@@ -184,10 +265,6 @@ private final class NativeMeetingRecorder {
                 completion(errorPayload(RecorderError.microphoneDenied))
                 return
             }
-            guard self.ensureScreenRecordingAccess() else {
-                completion(errorPayload(RecorderError.screenRecordingRequired))
-                return
-            }
 
             do {
                 let session = try self.makeSession(dataRoot: dataRoot)
@@ -200,7 +277,7 @@ private final class NativeMeetingRecorder {
 
                 Task {
                     do {
-                        try await system.start()
+                        try system.start()
                         DispatchQueue.main.async {
                             completion([
                                 "ok": true,
@@ -214,7 +291,7 @@ private final class NativeMeetingRecorder {
                         self.systemRecorder = nil
                         self.activeSession = nil
                         self.deleteFiles([session.microphoneURL, session.systemURL, session.mixedURL])
-                        let message = "Application audio capture could not start. Grant Screen Recording permission to Local Meeting Note Taker in System Settings, then try again. \(error.localizedDescription)"
+                        let message = "Application audio capture could not start. \(error.localizedDescription)"
                         DispatchQueue.main.async {
                             completion(errorPayload(RecorderError.uploadFailed(message)))
                         }
@@ -240,7 +317,7 @@ private final class NativeMeetingRecorder {
         microphone?.stop()
 
         Task {
-            _ = await system?.stop()
+            _ = system?.stop()
             do {
                 let capturedFiles = [session.microphoneURL, session.systemURL].filter(Self.usableAudioFile)
                 guard !capturedFiles.isEmpty else {
@@ -272,9 +349,7 @@ private final class NativeMeetingRecorder {
         microphoneRecorder = nil
         systemRecorder = nil
         activeSession = nil
-        Task {
-            _ = await system?.stop()
-        }
+        _ = system?.stop()
     }
 
     static func usableAudioFile(_ url: URL) -> Bool {
@@ -301,16 +376,6 @@ private final class NativeMeetingRecorder {
         }
     }
 
-    private func ensureScreenRecordingAccess() -> Bool {
-        if CGPreflightScreenCaptureAccess() {
-            return true
-        }
-        if CGRequestScreenCaptureAccess() {
-            return CGPreflightScreenCaptureAccess()
-        }
-        return false
-    }
-
     private func makeSession(dataRoot: URL) throws -> RecordingSession {
         let directory = dataRoot.appendingPathComponent("native-recordings")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -321,7 +386,7 @@ private final class NativeMeetingRecorder {
         return RecordingSession(
             directory: directory,
             microphoneURL: directory.appendingPathComponent("microphone-\(timestamp)-\(suffix).m4a"),
-            systemURL: directory.appendingPathComponent("application-audio-\(timestamp)-\(suffix).m4a"),
+            systemURL: directory.appendingPathComponent("application-audio-\(timestamp)-\(suffix).caf"),
             mixedURL: directory.appendingPathComponent("combined-recording-\(timestamp)-\(suffix).m4a")
         )
     }
@@ -343,11 +408,6 @@ private final class NativeMeetingRecorder {
 
     private func mixAudioFiles(_ files: [URL], outputURL: URL) async throws -> URL {
         try? FileManager.default.removeItem(at: outputURL)
-
-        if files.count == 1, let onlyFile = files.first {
-            try FileManager.default.copyItem(at: onlyFile, to: outputURL)
-            return outputURL
-        }
 
         let composition = AVMutableComposition()
         var addedTracks = 0

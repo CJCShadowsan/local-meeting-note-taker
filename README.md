@@ -41,7 +41,7 @@ During package installation, setup can take several minutes on a fresh Mac becau
 - an Ollama summary model
 - the default Whisper speech model
 
-Installer setup details are written to `Contents/Resources/local-meeting-note-taker/data/logs/pkg-install.log` inside the installed app. Runtime notes, uploads, pid/port files, and app logs are written to `~/Library/Application Support/Local Meeting Note Taker` so the installed `.app` bundle stays stable after signing. After installation, the app opens its own **Local Meeting Note Taker** window and identifies itself that way in the macOS app menu. The app uses a native Swift recording bridge instead of WebKit browser microphone capture; macOS may ask for Microphone and Screen Recording access the first time recording starts. It should not require Safari, Chrome, Terminal, or another browser.
+Installer setup details are written to `Contents/Resources/local-meeting-note-taker/data/logs/pkg-install.log` inside the installed app. Runtime notes, uploads, pid/port files, and app logs are written to `~/Library/Application Support/Local Meeting Note Taker` so the installed `.app` bundle stays stable after signing. After installation, the app opens its own **Local Meeting Note Taker** window and identifies itself that way in the macOS app menu. The app uses a native Swift recording bridge instead of WebKit browser microphone capture; macOS may ask for Microphone and System Audio Recording access the first time recording starts. It should not require Safari, Chrome, Terminal, or another external browser.
 
 ## Manual Install
 
@@ -53,10 +53,10 @@ cd local-meeting-note-taker
 
 ## Recording Teams, Meet, Zoom, Or System Audio
 
-The packaged macOS app records your default microphone and application audio together using native macOS capture APIs. The first recording may trigger two macOS privacy prompts:
+The packaged macOS app requires macOS 14.2 or newer and records your default microphone and application audio together using native Core Audio capture APIs. The first recording may trigger two macOS privacy prompts:
 
 - **Microphone** for your local voice.
-- **Screen Recording** for application audio from Teams, Google Meet, Zoom, browsers, and other apps.
+- **System Audio Recording** for application audio from Teams, Google Meet, Zoom, browsers, and other apps.
 
 After both permissions are granted, future recordings should start without repeated prompts. Uploading an existing Teams/Meet/Zoom recording also remains supported.
 
@@ -88,9 +88,9 @@ GitHub Actions builds the redistributable pkg and zip only when a GitHub Release
 To publish a release:
 
 ```bash
-git tag v0.1.16
-git push origin v0.1.16
-gh release create v0.1.16 --title "Local Meeting Note Taker v0.1.16" --notes "Release notes"
+git tag v0.1.17
+git push origin v0.1.17
+gh release create v0.1.17 --title "Local Meeting Note Taker v0.1.17" --notes "Release notes"
 ```
 
 The release workflow builds `LocalMeetingNoteTaker-installer.pkg` and `LocalMeetingNoteTaker-redistributable.zip`, then attaches both to that release.
@@ -121,6 +121,6 @@ The release workflow builds `LocalMeetingNoteTaker-installer.pkg` and `LocalMeet
 
 ## Notes
 
-This app is ad-hoc signed by the installer so macOS can keep a stable local privacy identity for Microphone and Screen Recording permissions. It is not currently Developer ID signed or notarized, so the package itself may still require right-click **Open** on stricter macOS Gatekeeper setups until the project is signed and notarized with an Apple Developer ID.
+This app is ad-hoc signed by the installer so macOS can keep a stable local privacy identity for Microphone and System Audio Recording permissions. It is not currently Developer ID signed or notarized, so the package itself may still require right-click **Open** on stricter macOS Gatekeeper setups until the project is signed and notarized with an Apple Developer ID.
 
 If the app window still says **Recent notes** instead of **History**, it is showing an older local server process. Current releases verify the running server belongs to the same app bundle before reusing it; older releases may need to be quit or replaced.

@@ -37,7 +37,7 @@ NATIVE_RECORDINGS_DIR = DATA_DIR / "native-recordings"
 DEFAULT_PORT = int(os.getenv("APP_PORT", "5055"))
 APP_NAME = "Local Meeting Note Taker"
 APP_IDENTIFIER = "local.meeting.note.taker"
-APP_VERSION = "0.1.16"
+APP_VERSION = "0.1.17"
 APP_ICON_CANDIDATES = [
     APP_ROOT.parent / "LocalMeetingNoteTaker.icns",
     APP_ROOT / "Local Meeting Note Taker.app" / "Contents" / "Resources" / "LocalMeetingNoteTaker.icns",

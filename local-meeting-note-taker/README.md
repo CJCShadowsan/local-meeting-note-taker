@@ -61,7 +61,7 @@ Double-click either:
 - `Local Meeting Note Taker.app`
 - `Start Local Meeting Note Taker.command`
 
-The launcher checks whether requirements are ready. A package install should already have completed setup, so launching from `/Applications` starts or reuses the local app server and opens a **Local Meeting Note Taker** desktop window. If a manual zip install or damaged install is missing requirements, the app can still open a repair setup window. The app uses the native Swift recording bridge for live capture, and macOS may ask for Microphone and Screen Recording access the first time recording starts. It should not open Safari, Chrome, Terminal, or another external browser for the normal app path.
+The launcher checks whether requirements are ready. A package install should already have completed setup, so launching from `/Applications` starts or reuses the local app server and opens a **Local Meeting Note Taker** desktop window. If a manual zip install or damaged install is missing requirements, the app can still open a repair setup window. The app uses the native Swift recording bridge for live capture, and macOS may ask for Microphone and System Audio Recording access the first time recording starts. It should not open Safari, Chrome, Terminal, or another external browser for the normal app path.
 
 To stop the saved webapp process, double-click:
 
@@ -99,14 +99,14 @@ The source audio is deleted after processing by default. Uncheck **Delete source
 
 ## Recording Meeting Audio On Mac
 
-When launched as `Local Meeting Note Taker.app`, the app records through a native macOS bridge, not browser `MediaRecorder`. It captures your default microphone and application audio together, so in-person meetings, Teams, Google Meet, Zoom, browsers, and other apps can be transcribed from one recording.
+When launched as `Local Meeting Note Taker.app` on macOS 14.2 or newer, the app records through a native macOS bridge, not browser `MediaRecorder`. It captures your default microphone and application audio together, so in-person meetings, Teams, Google Meet, Zoom, browsers, and other apps can be transcribed from one recording.
 
 The first recording may trigger macOS privacy prompts for:
 
 - **Microphone** access for your local voice.
-- **Screen Recording** access for application audio.
+- **System Audio Recording** access for application audio.
 
-The packaged app checks permissions before opening audio streams. If macOS requires a relaunch after enabling Screen Recording, reopen Local Meeting Note Taker and click **Start recording** again; it should not repeat the permission prompts once both permissions are granted.
+If macOS asks for System Audio Recording access, allow it for Local Meeting Note Taker. Once Microphone and System Audio Recording access are granted, future recordings should start without repeated prompts.
 
 Uploading an existing native Teams/Meet/Zoom recording is still the most reliable workflow, and those platforms provide their own participant recording notices.
 
@@ -114,7 +114,7 @@ Uploading an existing native Teams/Meet/Zoom recording is still the most reliabl
 
 If recording captures the wrong input:
 
-- macOS: check **System Settings > Privacy & Security > Microphone** and **Screen Recording** for Local Meeting Note Taker.
+- macOS: check **System Settings > Privacy & Security > Microphone** and **System Audio Recording** for Local Meeting Note Taker.
 - Teams/Meet/Zoom: confirm the meeting audio is playing through your Mac during capture.
 
 ## Model Settings

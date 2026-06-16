@@ -21,8 +21,8 @@ compile_bootstrap() {
   export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$WORK_DIR/clang-module-cache}"
   local arm_binary="$WORK_DIR/LocalMeetingNoteTaker-arm64"
   local intel_binary="$WORK_DIR/LocalMeetingNoteTaker-x86_64"
-  if swiftc -target arm64-apple-macos13.0 "$BOOTSTRAP_SOURCE" -o "$arm_binary" \
-    && swiftc -target x86_64-apple-macos13.0 "$BOOTSTRAP_SOURCE" -o "$intel_binary"; then
+  if swiftc -target arm64-apple-macos14.2 "$BOOTSTRAP_SOURCE" -o "$arm_binary" \
+    && swiftc -target x86_64-apple-macos14.2 "$BOOTSTRAP_SOURCE" -o "$intel_binary"; then
     lipo -create "$arm_binary" "$intel_binary" -output "$APP_MACOS/LocalMeetingNoteTaker"
   else
     swiftc "$BOOTSTRAP_SOURCE" -o "$APP_MACOS/LocalMeetingNoteTaker"
