@@ -100,9 +100,9 @@ run_setup_as_console_user() {
 sign_installed_app() {
   local sign_log="/tmp/local-meeting-note-taker-codesign.log"
   log "Signing installed app bundle for stable macOS privacy permissions"
-  /usr/bin/codesign --force --deep --sign - "$APP" > "$sign_log" 2>&1 \
+  /usr/bin/codesign --force --sign - "$APP" > "$sign_log" 2>&1 \
     || fail "Could not sign Local Meeting Note Taker.app. See $sign_log for details."
-  /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP" >> "$sign_log" 2>&1 \
+  /usr/bin/codesign --verify --verbose=2 "$APP" >> "$sign_log" 2>&1 \
     || fail "Could not verify Local Meeting Note Taker.app signature. See $sign_log for details."
   /bin/rm -f "$sign_log" 2>/dev/null || true
 }

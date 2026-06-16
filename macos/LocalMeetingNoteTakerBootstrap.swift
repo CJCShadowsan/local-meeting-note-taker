@@ -7,7 +7,7 @@ import ScreenCaptureKit
 import WebKit
 
 private let appName = "Local Meeting Note Taker"
-private let appVersion = "0.1.15"
+private let appVersion = "0.1.16"
 private let appPathPrefix = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 private enum RecorderError: LocalizedError {
