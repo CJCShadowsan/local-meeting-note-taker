@@ -99,7 +99,7 @@ The source audio is deleted after processing by default. Uncheck **Delete source
 
 ## Recording Meeting Audio On Mac
 
-When launched as `Local Meeting Note Taker.app` on macOS 14.2 or newer, the app records through a native macOS bridge, not browser `MediaRecorder`. It captures your default microphone and application audio together, so in-person meetings, Teams, Google Meet, Zoom, browsers, and other apps can be transcribed from one recording.
+When launched as `Local Meeting Note Taker.app` on macOS 14.2 or newer, the app records through a native macOS bridge, not browser `MediaRecorder`. It captures your default microphone and application audio across available output device streams, including Bluetooth/headphone routes such as AirPods, so in-person meetings, Teams, Google Meet, Zoom, browsers, and other apps can be transcribed from one recording.
 
 The first recording may trigger macOS privacy prompts for:
 
@@ -115,7 +115,7 @@ Uploading an existing native Teams/Meet/Zoom recording is still the most reliabl
 If recording captures the wrong input:
 
 - macOS: check **System Settings > Privacy & Security > Microphone** and **System Audio Recording** for Local Meeting Note Taker.
-- Teams/Meet/Zoom: confirm the meeting audio is playing through your Mac during capture.
+- Teams/Meet/Zoom: confirm the meeting audio is playing through your Mac during capture. If you change the meeting output device after recording starts, stop and start recording again so the app can retap the new output route.
 
 ## Model Settings
 

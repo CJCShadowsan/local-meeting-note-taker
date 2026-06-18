@@ -5,7 +5,7 @@ import Foundation
 import WebKit
 
 private let appName = "Local Meeting Note Taker"
-private let appVersion = "0.1.17"
+private let appVersion = "0.1.18"
 private let appPathPrefix = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 private enum RecorderError: LocalizedError {
@@ -38,14 +38,258 @@ private enum RecorderError: LocalizedError {
 }
 
 private final class SystemAudioRecorder {
+    private struct TapTarget: Hashable {
+        let deviceID: AudioObjectID?
+        let deviceUID: String?
+        let streamIndex: Int?
+        let label: String
+
+        static var global: TapTarget {
+            TapTarget(deviceID: nil, deviceUID: nil, streamIndex: nil, label: "global")
+        }
+    }
+
+    private final class TapCapture {
+        private let target: TapTarget
+        private let outputURL: URL
+        private let ioQueue: DispatchQueue
+        private var tapID = AudioObjectID(kAudioObjectUnknown)
+        private var aggregateDeviceID = AudioObjectID(kAudioObjectUnknown)
+        private var ioProcID: AudioDeviceIOProcID?
+        private var audioFile: AVAudioFile?
+        private var format: AVAudioFormat?
+        private var capturedAudio = false
+
+        init(target: TapTarget, outputURL: URL) {
+            self.target = target
+            self.outputURL = outputURL
+            self.ioQueue = DispatchQueue(label: "local.meeting.note.taker.system-audio.\(target.label)")
+        }
+
+        func start() throws {
+            try? FileManager.default.removeItem(at: outputURL)
+            capturedAudio = false
+
+            let tapDescription: CATapDescription
+            if let deviceUID = target.deviceUID, let streamIndex = target.streamIndex {
+                tapDescription = CATapDescription(
+                    __excludingProcesses: [],
+                    andDeviceUID: deviceUID,
+                    withStream: streamIndex
+                )
+            } else {
+                tapDescription = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+            }
+            tapDescription.name = "\(appName) Application Audio \(target.label)"
+            tapDescription.isPrivate = true
+            tapDescription.muteBehavior = .unmuted
+
+            var newTapID = AudioObjectID(kAudioObjectUnknown)
+            try checkAudioStatus(
+                AudioHardwareCreateProcessTap(tapDescription, &newTapID),
+                operation: "Create system audio tap \(target.label)"
+            )
+            tapID = newTapID
+
+            do {
+                let tapUID = try getTapUID(newTapID)
+                var streamFormat = try getTapFormat(newTapID)
+                guard let avFormat = AVAudioFormat(streamDescription: &streamFormat) else {
+                    throw RecorderError.noAudio
+                }
+                format = avFormat
+                audioFile = try AVAudioFile(forWriting: outputURL, settings: avFormat.settings)
+
+                let aggregateUID = "local.meeting.note.taker.\(target.label).\(UUID().uuidString)"
+                let tapDictionary: [String: Any] = [
+                    String(kAudioSubTapUIDKey): tapUID,
+                    String(kAudioSubTapDriftCompensationKey): true,
+                ]
+                let aggregateDescription: [String: Any] = [
+                    String(kAudioAggregateDeviceNameKey): "\(appName) Audio Capture \(target.label)",
+                    String(kAudioAggregateDeviceUIDKey): aggregateUID,
+                    String(kAudioAggregateDeviceIsPrivateKey): true,
+                    String(kAudioAggregateDeviceTapListKey): [tapDictionary],
+                ]
+
+                var newAggregateDeviceID = AudioObjectID(kAudioObjectUnknown)
+                try checkAudioStatus(
+                    AudioHardwareCreateAggregateDevice(aggregateDescription as CFDictionary, &newAggregateDeviceID),
+                    operation: "Create system audio capture device \(target.label)"
+                )
+                aggregateDeviceID = newAggregateDeviceID
+
+                var newIOProcID: AudioDeviceIOProcID?
+                try checkAudioStatus(
+                    AudioDeviceCreateIOProcIDWithBlock(&newIOProcID, newAggregateDeviceID, ioQueue) { [weak self] _, inputData, _, _, _ in
+                        self?.writeInputData(inputData)
+                    },
+                    operation: "Create system audio input callback \(target.label)"
+                )
+                guard let newIOProcID else {
+                    throw RecorderError.noAudio
+                }
+                ioProcID = newIOProcID
+
+                try checkAudioStatus(
+                    AudioDeviceStart(newAggregateDeviceID, newIOProcID),
+                    operation: "Start system audio capture \(target.label)"
+                )
+            } catch {
+                cleanup()
+                throw error
+            }
+        }
+
+        func stop(removeCapturedFile: Bool = false) -> URL? {
+            if aggregateDeviceID != AudioObjectID(kAudioObjectUnknown), let ioProcID {
+                _ = AudioDeviceStop(aggregateDeviceID, ioProcID)
+            }
+            cleanup()
+
+            guard capturedAudio, NativeMeetingRecorder.usableAudioFile(outputURL) else {
+                try? FileManager.default.removeItem(at: outputURL)
+                return nil
+            }
+            if removeCapturedFile {
+                try? FileManager.default.removeItem(at: outputURL)
+                return nil
+            }
+            return outputURL
+        }
+
+        private func writeInputData(_ inputData: UnsafePointer<AudioBufferList>?) {
+            guard let inputData, let format, let audioFile else {
+                return
+            }
+
+            let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputData))
+            let byteSize = buffers.reduce(0) { max($0, Int($1.mDataByteSize)) }
+            guard byteSize > 0 else {
+                return
+            }
+
+            let bytesPerFrame = Int(format.streamDescription.pointee.mBytesPerFrame)
+            guard bytesPerFrame > 0 else {
+                return
+            }
+
+            let frameLength = AVAudioFrameCount(byteSize / bytesPerFrame)
+            guard frameLength > 0,
+                  let buffer = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: inputData)
+            else {
+                return
+            }
+            buffer.frameLength = min(frameLength, buffer.frameCapacity)
+
+            do {
+                try audioFile.write(from: buffer)
+                if !capturedAudio, containsNonSilentSamples(inputData, format: format) {
+                    capturedAudio = true
+                }
+            } catch {
+                return
+            }
+        }
+
+        private func containsNonSilentSamples(_ inputData: UnsafePointer<AudioBufferList>, format: AVAudioFormat) -> Bool {
+            let description = format.streamDescription.pointee
+            guard description.mFormatID == kAudioFormatLinearPCM else {
+                return true
+            }
+
+            let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputData))
+            let flags = description.mFormatFlags
+            let isFloat = (flags & kAudioFormatFlagIsFloat) != 0
+            let isSignedInteger = (flags & kAudioFormatFlagIsSignedInteger) != 0
+            let bytesPerSample = max(1, Int(description.mBitsPerChannel / 8))
+
+            for buffer in buffers {
+                guard let data = buffer.mData, buffer.mDataByteSize > 0 else {
+                    continue
+                }
+                let byteCount = Int(buffer.mDataByteSize)
+                if isFloat, bytesPerSample == MemoryLayout<Float>.size {
+                    let sampleCount = byteCount / MemoryLayout<Float>.size
+                    let samples = data.assumingMemoryBound(to: Float.self)
+                    for index in 0..<sampleCount where abs(samples[index]) > 0.00001 {
+                        return true
+                    }
+                } else if isSignedInteger, bytesPerSample == MemoryLayout<Int16>.size {
+                    let sampleCount = byteCount / MemoryLayout<Int16>.size
+                    let samples = data.assumingMemoryBound(to: Int16.self)
+                    for index in 0..<sampleCount where abs(Int(samples[index])) > 8 {
+                        return true
+                    }
+                } else {
+                    let bytes = data.assumingMemoryBound(to: UInt8.self)
+                    for index in 0..<byteCount where bytes[index] != 0 {
+                        return true
+                    }
+                }
+            }
+            return false
+        }
+
+        private func cleanup() {
+            audioFile = nil
+            format = nil
+            if aggregateDeviceID != AudioObjectID(kAudioObjectUnknown) {
+                if let ioProcID {
+                    _ = AudioDeviceDestroyIOProcID(aggregateDeviceID, ioProcID)
+                }
+                _ = AudioHardwareDestroyAggregateDevice(aggregateDeviceID)
+            }
+            if #available(macOS 14.2, *), tapID != AudioObjectID(kAudioObjectUnknown) {
+                _ = AudioHardwareDestroyProcessTap(tapID)
+            }
+            ioProcID = nil
+            aggregateDeviceID = AudioObjectID(kAudioObjectUnknown)
+            tapID = AudioObjectID(kAudioObjectUnknown)
+        }
+
+        private func getTapUID(_ tapID: AudioObjectID) throws -> String {
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioTapPropertyUID,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var dataSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+            var tapUID: Unmanaged<CFString>?
+            try checkAudioStatus(
+                AudioObjectGetPropertyData(tapID, &address, 0, nil, &dataSize, &tapUID),
+                operation: "Read system audio tap identifier \(target.label)"
+            )
+            guard let tapUID = tapUID?.takeRetainedValue() else {
+                throw RecorderError.noAudio
+            }
+            return tapUID as String
+        }
+
+        private func getTapFormat(_ tapID: AudioObjectID) throws -> AudioStreamBasicDescription {
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioTapPropertyFormat,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var streamDescription = AudioStreamBasicDescription()
+            var dataSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+            try checkAudioStatus(
+                AudioObjectGetPropertyData(tapID, &address, 0, nil, &dataSize, &streamDescription),
+                operation: "Read system audio format \(target.label)"
+            )
+            return streamDescription
+        }
+
+        private func checkAudioStatus(_ status: OSStatus, operation: String) throws {
+            guard status == noErr else {
+                throw RecorderError.systemAudioRequired("\(operation) failed with OSStatus \(SystemAudioRecorder.formatOSStatus(status)).")
+            }
+        }
+    }
+
     private let outputURL: URL
-    private let ioQueue = DispatchQueue(label: "local.meeting.note.taker.system-audio")
-    private var tapID = AudioObjectID(kAudioObjectUnknown)
-    private var aggregateDeviceID = AudioObjectID(kAudioObjectUnknown)
-    private var ioProcID: AudioDeviceIOProcID?
-    private var audioFile: AVAudioFile?
-    private var format: AVAudioFormat?
-    private var capturedAudio = false
+    private var captures: [TapCapture] = []
 
     init(outputURL: URL) {
         self.outputURL = outputURL
@@ -56,173 +300,212 @@ private final class SystemAudioRecorder {
             throw RecorderError.unsupportedSystemAudio
         }
 
-        capturedAudio = false
-        try? FileManager.default.removeItem(at: outputURL)
+        captures = []
+        let targets = makeOutputTapTargets()
+        var failures: [String] = []
 
-        let tapDescription = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
-        tapDescription.name = "\(appName) Application Audio"
-        tapDescription.isPrivate = true
-        tapDescription.muteBehavior = .unmuted
-
-        var newTapID = AudioObjectID(kAudioObjectUnknown)
-        try checkAudioStatus(
-            AudioHardwareCreateProcessTap(tapDescription, &newTapID),
-            operation: "Create system audio tap"
-        )
-        tapID = newTapID
-
-        do {
-            let tapUID = try getTapUID(newTapID)
-            var streamFormat = try getTapFormat(newTapID)
-            guard let avFormat = AVAudioFormat(streamDescription: &streamFormat) else {
-                throw RecorderError.noAudio
+        for target in targets {
+            let capture = TapCapture(target: target, outputURL: outputFileURL(for: target))
+            do {
+                try capture.start()
+                captures.append(capture)
+            } catch {
+                failures.append(error.localizedDescription)
             }
-            format = avFormat
-            audioFile = try AVAudioFile(forWriting: outputURL, settings: avFormat.settings)
+        }
 
-            let aggregateUID = "local.meeting.note.taker.\(UUID().uuidString)"
-            let tapDictionary: [String: Any] = [
-                String(kAudioSubTapUIDKey): tapUID,
-                String(kAudioSubTapDriftCompensationKey): true,
-            ]
-            let aggregateDescription: [String: Any] = [
-                String(kAudioAggregateDeviceNameKey): "\(appName) Audio Capture",
-                String(kAudioAggregateDeviceUIDKey): aggregateUID,
-                String(kAudioAggregateDeviceIsPrivateKey): true,
-                String(kAudioAggregateDeviceTapListKey): [tapDictionary],
-            ]
-
-            var newAggregateDeviceID = AudioObjectID(kAudioObjectUnknown)
-            try checkAudioStatus(
-                AudioHardwareCreateAggregateDevice(aggregateDescription as CFDictionary, &newAggregateDeviceID),
-                operation: "Create system audio capture device"
-            )
-            aggregateDeviceID = newAggregateDeviceID
-
-            var newIOProcID: AudioDeviceIOProcID?
-            try checkAudioStatus(
-                AudioDeviceCreateIOProcIDWithBlock(&newIOProcID, newAggregateDeviceID, ioQueue) { [weak self] _, inputData, _, _, _ in
-                    self?.writeInputData(inputData)
-                },
-                operation: "Create system audio input callback"
-            )
-            guard let newIOProcID else {
-                throw RecorderError.noAudio
+        if captures.isEmpty {
+            let capture = TapCapture(target: .global, outputURL: outputFileURL(for: .global))
+            do {
+                try capture.start()
+                captures.append(capture)
+            } catch {
+                failures.append(error.localizedDescription)
             }
-            ioProcID = newIOProcID
+        }
 
-            try checkAudioStatus(
-                AudioDeviceStart(newAggregateDeviceID, newIOProcID),
-                operation: "Start system audio capture"
-            )
-        } catch {
-            cleanup()
-            throw error
+        guard !captures.isEmpty else {
+            throw RecorderError.systemAudioRequired(failures.joined(separator: " "))
         }
     }
 
-    func stop() -> URL? {
-        if aggregateDeviceID != AudioObjectID(kAudioObjectUnknown), let ioProcID {
-            _ = AudioDeviceStop(aggregateDeviceID, ioProcID)
-        }
-        cleanup()
+    func stop(removeCapturedFiles: Bool = false) -> [URL] {
+        let files = captures.compactMap { $0.stop(removeCapturedFile: removeCapturedFiles) }
+        captures = []
+        return files
+    }
 
-        guard capturedAudio, NativeMeetingRecorder.usableAudioFile(outputURL) else {
-            try? FileManager.default.removeItem(at: outputURL)
+    private func makeOutputTapTargets() -> [TapTarget] {
+        var targets: [TapTarget] = []
+        var seen = Set<String>()
+
+        func appendTargets(for deviceID: AudioObjectID) {
+            guard let deviceUID = try? getDeviceUID(deviceID),
+                  let streams = try? getOutputStreams(deviceID),
+                  !streams.isEmpty
+            else {
+                return
+            }
+
+            for (streamIndex, _) in streams.enumerated() {
+                let key = "\(deviceUID)#\(streamIndex)"
+                guard !seen.contains(key) else {
+                    continue
+                }
+                seen.insert(key)
+                targets.append(TapTarget(
+                    deviceID: deviceID,
+                    deviceUID: deviceUID,
+                    streamIndex: streamIndex,
+                    label: sanitizeLabel("\(deviceUID)-stream-\(streamIndex)")
+                ))
+            }
+        }
+
+        for deviceID in defaultOutputDeviceIDs() {
+            appendTargets(for: deviceID)
+        }
+        for deviceID in allOutputDeviceIDs() {
+            appendTargets(for: deviceID)
+        }
+        return targets
+    }
+
+    private func defaultOutputDeviceIDs() -> [AudioObjectID] {
+        [
+            getAudioObjectIDProperty(
+                objectID: AudioObjectID(kAudioObjectSystemObject),
+                selector: kAudioHardwarePropertyDefaultOutputDevice,
+                scope: kAudioObjectPropertyScopeGlobal
+            ),
+            getAudioObjectIDProperty(
+                objectID: AudioObjectID(kAudioObjectSystemObject),
+                selector: kAudioHardwarePropertyDefaultSystemOutputDevice,
+                scope: kAudioObjectPropertyScopeGlobal
+            ),
+        ].compactMap { $0 }.filter { $0 != AudioObjectID(kAudioObjectUnknown) }
+    }
+
+    private func allOutputDeviceIDs() -> [AudioObjectID] {
+        guard let devices = try? getAudioObjectIDArrayProperty(
+            objectID: AudioObjectID(kAudioObjectSystemObject),
+            selector: kAudioHardwarePropertyDevices,
+            scope: kAudioObjectPropertyScopeGlobal
+        ) else {
+            return []
+        }
+        return devices.filter { deviceID in
+            guard let streams = try? getOutputStreams(deviceID) else {
+                return false
+            }
+            return !streams.isEmpty
+        }
+    }
+
+    private func getOutputStreams(_ deviceID: AudioObjectID) throws -> [AudioObjectID] {
+        try getAudioObjectIDArrayProperty(
+            objectID: deviceID,
+            selector: kAudioDevicePropertyStreams,
+            scope: kAudioObjectPropertyScopeOutput
+        )
+    }
+
+    private func getDeviceUID(_ deviceID: AudioObjectID) throws -> String {
+        try getCFStringProperty(
+            objectID: deviceID,
+            selector: kAudioDevicePropertyDeviceUID,
+            scope: kAudioObjectPropertyScopeGlobal
+        )
+    }
+
+    private func getAudioObjectIDProperty(
+        objectID: AudioObjectID,
+        selector: AudioObjectPropertySelector,
+        scope: AudioObjectPropertyScope
+    ) -> AudioObjectID? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: scope,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var value = AudioObjectID(kAudioObjectUnknown)
+        var dataSize = UInt32(MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(objectID, &address, 0, nil, &dataSize, &value) == noErr else {
             return nil
         }
-        return outputURL
+        return value
     }
 
-    private func writeInputData(_ inputData: UnsafePointer<AudioBufferList>?) {
-        guard let inputData, let format, let audioFile else {
-            return
-        }
-
-        let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputData))
-        let byteSize = buffers.reduce(0) { max($0, Int($1.mDataByteSize)) }
-        guard byteSize > 0 else {
-            return
-        }
-
-        let bytesPerFrame = Int(format.streamDescription.pointee.mBytesPerFrame)
-        guard bytesPerFrame > 0 else {
-            return
-        }
-
-        let frameLength = AVAudioFrameCount(byteSize / bytesPerFrame)
-        guard frameLength > 0,
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: inputData)
-        else {
-            return
-        }
-        buffer.frameLength = min(frameLength, buffer.frameCapacity)
-
-        do {
-            try audioFile.write(from: buffer)
-            capturedAudio = true
-        } catch {
-            return
-        }
-    }
-
-    private func getTapUID(_ tapID: AudioObjectID) throws -> String {
+    private func getAudioObjectIDArrayProperty(
+        objectID: AudioObjectID,
+        selector: AudioObjectPropertySelector,
+        scope: AudioObjectPropertyScope
+    ) throws -> [AudioObjectID] {
         var address = AudioObjectPropertyAddress(
-            mSelector: kAudioTapPropertyUID,
-            mScope: kAudioObjectPropertyScopeGlobal,
+            mSelector: selector,
+            mScope: scope,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        try checkAudioStatus(
+            AudioObjectGetPropertyDataSize(objectID, &address, 0, nil, &dataSize),
+            operation: "Read Core Audio property size"
+        )
+        let count = Int(dataSize) / MemoryLayout<AudioObjectID>.size
+        guard count > 0 else {
+            return []
+        }
+        var values = Array(repeating: AudioObjectID(kAudioObjectUnknown), count: count)
+        try values.withUnsafeMutableBufferPointer { buffer in
+            try checkAudioStatus(
+                AudioObjectGetPropertyData(objectID, &address, 0, nil, &dataSize, buffer.baseAddress!),
+                operation: "Read Core Audio object list"
+            )
+        }
+        return values.filter { $0 != AudioObjectID(kAudioObjectUnknown) }
+    }
+
+    private func getCFStringProperty(
+        objectID: AudioObjectID,
+        selector: AudioObjectPropertySelector,
+        scope: AudioObjectPropertyScope
+    ) throws -> String {
+        var address = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: scope,
             mElement: kAudioObjectPropertyElementMain
         )
         var dataSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-        var tapUID: Unmanaged<CFString>?
+        var value: Unmanaged<CFString>?
         try checkAudioStatus(
-            AudioObjectGetPropertyData(tapID, &address, 0, nil, &dataSize, &tapUID),
-            operation: "Read system audio tap identifier"
+            AudioObjectGetPropertyData(objectID, &address, 0, nil, &dataSize, &value),
+            operation: "Read Core Audio string property"
         )
-        guard let tapUID = tapUID?.takeRetainedValue() else {
+        guard let value = value?.takeRetainedValue() else {
             throw RecorderError.noAudio
         }
-        return tapUID as String
+        return value as String
     }
 
-    private func getTapFormat(_ tapID: AudioObjectID) throws -> AudioStreamBasicDescription {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioTapPropertyFormat,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var streamDescription = AudioStreamBasicDescription()
-        var dataSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
-        try checkAudioStatus(
-            AudioObjectGetPropertyData(tapID, &address, 0, nil, &dataSize, &streamDescription),
-            operation: "Read system audio format"
-        )
-        return streamDescription
+    private func outputFileURL(for target: TapTarget) -> URL {
+        outputURL.deletingLastPathComponent()
+            .appendingPathComponent("\(outputURL.deletingPathExtension().lastPathComponent)-\(target.label).caf")
     }
 
-    private func cleanup() {
-        audioFile = nil
-        format = nil
-        if aggregateDeviceID != AudioObjectID(kAudioObjectUnknown) {
-            if let ioProcID {
-                _ = AudioDeviceDestroyIOProcID(aggregateDeviceID, ioProcID)
-            }
-            _ = AudioHardwareDestroyAggregateDevice(aggregateDeviceID)
-        }
-        if #available(macOS 14.2, *), tapID != AudioObjectID(kAudioObjectUnknown) {
-            _ = AudioHardwareDestroyProcessTap(tapID)
-        }
-        ioProcID = nil
-        aggregateDeviceID = AudioObjectID(kAudioObjectUnknown)
-        tapID = AudioObjectID(kAudioObjectUnknown)
+    private func sanitizeLabel(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let scalars = value.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" }
+        let label = String(scalars).trimmingCharacters(in: CharacterSet(charactersIn: "-_"))
+        return label.isEmpty ? "output" : label
     }
 
     private func checkAudioStatus(_ status: OSStatus, operation: String) throws {
         guard status == noErr else {
-            throw RecorderError.systemAudioRequired("\(operation) failed with OSStatus \(formatOSStatus(status)).")
+            throw RecorderError.systemAudioRequired("\(operation) failed with OSStatus \(Self.formatOSStatus(status)).")
         }
     }
 
-    private func formatOSStatus(_ status: OSStatus) -> String {
+    private static func formatOSStatus(_ status: OSStatus) -> String {
         let unsigned = UInt32(bitPattern: status)
         let bytes: [UInt8] = [
             UInt8((unsigned >> 24) & 0xff),
@@ -287,6 +570,7 @@ private final class NativeMeetingRecorder {
                         }
                     } catch {
                         microphone.stop()
+                        _ = system.stop(removeCapturedFiles: true)
                         self.microphoneRecorder = nil
                         self.systemRecorder = nil
                         self.activeSession = nil
@@ -317,9 +601,9 @@ private final class NativeMeetingRecorder {
         microphone?.stop()
 
         Task {
-            _ = system?.stop()
+            let systemFiles = system?.stop() ?? []
             do {
-                let capturedFiles = [session.microphoneURL, session.systemURL].filter(Self.usableAudioFile)
+                let capturedFiles = ([session.microphoneURL] + systemFiles).filter(Self.usableAudioFile)
                 guard !capturedFiles.isEmpty else {
                     throw RecorderError.noAudio
                 }
@@ -329,7 +613,7 @@ private final class NativeMeetingRecorder {
                 response["ok"] = true
 
                 if boolValue(settings["delete_source_audio"], defaultValue: true) {
-                    deleteFiles([session.microphoneURL, session.systemURL, session.mixedURL])
+                    deleteFiles([session.microphoneURL, session.systemURL, session.mixedURL] + systemFiles)
                 }
 
                 DispatchQueue.main.async {
@@ -349,7 +633,7 @@ private final class NativeMeetingRecorder {
         microphoneRecorder = nil
         systemRecorder = nil
         activeSession = nil
-        _ = system?.stop()
+        _ = system?.stop(removeCapturedFiles: true)
     }
 
     static func usableAudioFile(_ url: URL) -> Bool {

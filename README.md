@@ -53,7 +53,7 @@ cd local-meeting-note-taker
 
 ## Recording Teams, Meet, Zoom, Or System Audio
 
-The packaged macOS app requires macOS 14.2 or newer and records your default microphone and application audio together using native Core Audio capture APIs. The first recording may trigger two macOS privacy prompts:
+The packaged macOS app requires macOS 14.2 or newer and records your default microphone and application audio together using native Core Audio capture APIs. Application audio is captured from available output device streams, including Bluetooth/headphone routes such as AirPods, so meetings should not become one-sided when the speaker audio is routed away from the built-in speakers. The first recording may trigger two macOS privacy prompts:
 
 - **Microphone** for your local voice.
 - **System Audio Recording** for application audio from Teams, Google Meet, Zoom, browsers, and other apps.
@@ -88,9 +88,9 @@ GitHub Actions builds the redistributable pkg and zip only when a GitHub Release
 To publish a release:
 
 ```bash
-git tag v0.1.17
-git push origin v0.1.17
-gh release create v0.1.17 --title "Local Meeting Note Taker v0.1.17" --notes "Release notes"
+git tag v0.1.18
+git push origin v0.1.18
+gh release create v0.1.18 --title "Local Meeting Note Taker v0.1.18" --notes "Release notes"
 ```
 
 The release workflow builds `LocalMeetingNoteTaker-installer.pkg` and `LocalMeetingNoteTaker-redistributable.zip`, then attaches both to that release.
